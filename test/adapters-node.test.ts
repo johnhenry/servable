@@ -139,7 +139,15 @@ test("mounting a fileable tree serves it over real HTTP too", async () => {
   });
 });
 
-test("upgradeWebSocket() works end-to-end on the real Node adapter -- a real client WebSocket, real echo round-trip", async () => {
+test(
+  "upgradeWebSocket() works end-to-end on the real Node adapter -- a real client WebSocket, real echo round-trip",
+  // The *client* WebSocket global (used here only to drive the test, not
+  // by the library itself -- the server-side upgrade delegates to leserve's
+  // `ws`-library-based socket regardless) isn't available until Node 22;
+  // this package's own engines range goes down to 18.19, and CI confirmed
+  // Node 18/20 both throw "WebSocket is not defined" constructing it.
+  { skip: typeof WebSocket === "undefined" },
+  async () => {
   const tree = Router({
     children: Route({
       path: "/ws",
