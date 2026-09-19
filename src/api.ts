@@ -126,19 +126,30 @@ interface DenoLike {
 
 /**
  * Abstracts WebSocket-upgrade mechanics across runtimes -- every modern
- * runtime models an upgrade as still returning a `Response` (status 101,
- * socket attached), just with different APIs to get there. Real support:
- * Deno (`Deno.upgradeWebSocket`) and Cloudflare Workers (`WebSocketPair`),
- * both feature-detected, both trivial since the platform already does the
- * hard work. Node has no built-in server-side WebSocket upgrade/framing at
- * all (only a client `WebSocket` global since v22) -- implementing that
- * from a raw socket correctly (handshake, opcodes, masking, fragmentation,
- * ping/pong, close frames) is real protocol work, not something to rush
- * inside this pass. Throws a clear, honest error there instead of shipping
- * an unverified bridge -- documented as a known v1 gap, not silently
- * unsupported.
+ * runtime models an upgrade as still returning a `Response`-like value
+ * (status 101, socket attached), just with different APIs to get there.
+ * `upgradeWebSocket()` is `async` uniformly (Deno/Workers resolve
+ * trivially fast; Node's handshake is genuinely callback/promise-based --
+ * `wss.handleUpgrade()` has no synchronous form -- so making every branch
+ * async, rather than only Node's, keeps one signature instead of two).
+ *
+ * - **Deno**: `Deno.upgradeWebSocket(req)`, feature-detected.
+ * - **Cloudflare Workers**: `WebSocketPair`, feature-detected.
+ * - **Node**: delegates to `leserve`'s `upgradeRawSocket()` (lazily
+ *   imported -- servable's core stays portable across runtimes and never
+ *   pays for a Node-only dependency unless this branch actually runs),
+ *   reached via `req.raw` -- the raw `IncomingMessage` servable's own
+ *   `adapters/node.js` attaches to every `Request` it constructs (via
+ *   `leserve`'s own `toWebRequest(req, { attachRaw: true })`, the same
+ *   conversion `leserve`'s `serve()` uses internally). The socket
+ *   servable's Node branch resolves is a `ws` library `WebSocket`
+ *   (EventEmitter-based, `.on('message', ...)`), not the DOM
+ *   `EventTarget`-style `WebSocket` Deno/Workers hand back
+ *   (`.addEventListener('message', ...)`) -- `ws` also implements the
+ *   `.addEventListener` compatibility shim, but code that branches on
+ *   `instanceof WebSocket` will not treat them as the same class.
  */
-export function upgradeWebSocket(req: Request): { socket: WebSocket; response: globalThis.Response } {
+export async function upgradeWebSocket(req: Request): Promise<{ socket: WebSocket; response: globalThis.Response }> {
   const deno = (globalThis as { Deno?: DenoLike }).Deno;
   if (deno && typeof deno.upgradeWebSocket === "function") {
     return deno.upgradeWebSocket(req);
@@ -155,9 +166,19 @@ export function upgradeWebSocket(req: Request): { socket: WebSocket; response: g
     } as ResponseInit);
     return { socket: server, response };
   }
+  const raw = (req as unknown as { raw?: unknown }).raw;
+  if (raw) {
+    const { upgradeRawSocket, WEBSOCKET_UPGRADE_RESPONSE } = await import("leserve/websocket");
+    const socket = await upgradeRawSocket(raw);
+    return {
+      socket: socket as unknown as WebSocket,
+      response: WEBSOCKET_UPGRADE_RESPONSE as unknown as globalThis.Response,
+    };
+  }
   throw new ServableError(
-    "upgradeWebSocket() has no Node implementation in this version -- Node has no built-in server-side " +
-      "WebSocket upgrade/framing (only a client WebSocket global). Supported today: Deno, Cloudflare Workers.",
+    'upgradeWebSocket() found no raw Node request to upgrade (no `.raw` on this Request) -- make sure this is ' +
+      "running under @johnhenry/servable/adapters/node's serve(), which attaches it automatically. On any other " +
+      "runtime this branch shouldn't be reached at all (Deno/Cloudflare Workers are handled above).",
     "upgradeWebSocket()",
   );
 }

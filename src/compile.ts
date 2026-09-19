@@ -121,11 +121,25 @@ function attachTrailers(response: globalThis.Response, trailersInput: unknown, r
   pendingTrailers.set(response, resolved);
 }
 
+/**
+ * A completed WebSocket upgrade (see api.ts's upgradeWebSocket()) can't be
+ * a real `Response` -- the Fetch spec's constructor rejects any status
+ * outside 200-599, and a status-101 marker deliberately isn't one (Deno's
+ * own upgrade response and leserve's WEBSOCKET_UPGRADE_RESPONSE both work
+ * this way). Recognized purely by `.status === 101` and passed through
+ * untouched -- the socket has already been handed off, so there's nothing
+ * left to merge headers onto or otherwise process.
+ */
+function isWebSocketUpgradeResponse(response: unknown): boolean {
+  return !!response && typeof response === "object" && (response as { status?: number }).status === 101;
+}
+
 async function applyRouteHeaders(
   response: globalThis.Response,
   route: CompiledRoute,
   req: Request,
 ): Promise<globalThis.Response> {
+  if (isWebSocketUpgradeResponse(response)) return response;
   if (route.headersLayers.length === 0) return response;
   const resolvedLayers = await Promise.all(route.headersLayers.map((layer) => resolveHeadersInputOrFn(layer, req)));
   const merged = mergeHeaders(response.headers, ...resolvedLayers);

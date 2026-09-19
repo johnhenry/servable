@@ -1,21 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { compile } from "../src/compile.js";
 import { serve } from "../adapters/node.js";
 import { ErrorBoundary, Group, Redirect, Route, Router, Use } from "../src/components.js";
-import { sse, streamBody } from "../src/api.js";
+import { sse, streamBody, upgradeWebSocket } from "../src/api.js";
 
 async function withServer(tree: unknown, run: (base: string) => Promise<void>): Promise<void> {
   const compiled = await compile(tree);
-  const server = serve(compiled, { port: 0 });
-  await new Promise<void>((resolvePromise) => server.once("listening", () => resolvePromise()));
-  const { port } = server.address() as AddressInfo;
+  // serve() returns its handle synchronously, before `listen()` completes
+  // in the background -- capture it first, then wait for onListen to learn
+  // the real (port: 0 -> OS-assigned) port, same order leserve's own
+  // serveReady() test helper uses and for the same reason.
+  let resolvePort: (port: number) => void;
+  const portPromise = new Promise<number>((resolve) => {
+    resolvePort = resolve;
+  });
+  const handle = serve(compiled, { port: 0, onListen: (info) => resolvePort(info.port) });
+  const port = await portPromise;
   try {
     await run(`http://localhost:${port}`);
   } finally {
-    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    await handle[Symbol.asyncDispose]();
   }
 }
 
@@ -131,4 +137,51 @@ test("mounting a fileable tree serves it over real HTTP too", async () => {
     const res = await fetch(`${base}/static/index.html`);
     assert.equal(await res.text(), "mounted");
   });
+});
+
+test("upgradeWebSocket() works end-to-end on the real Node adapter -- a real client WebSocket, real echo round-trip", async () => {
+  const tree = Router({
+    children: Route({
+      path: "/ws",
+      method: "GET",
+      handler: async (req: Request) => {
+        const { socket, response } = await upgradeWebSocket(req);
+        // The Node branch resolves a `ws` library socket (EventEmitter-
+        // based, `.on(...)`), not the DOM EventTarget-style WebSocket the
+        // declared return type promises for Deno/Workers parity -- see
+        // upgradeWebSocket()'s own doc comment in api.ts.
+        const rawSocket = socket as unknown as { on: (event: string, listener: (data: unknown) => void) => void; send: (data: unknown) => void };
+        rawSocket.on("message", (data: unknown) => {
+          rawSocket.send(`echo: ${String(data)}`);
+        });
+        return response;
+      },
+    }),
+  });
+
+  const compiled = await compile(tree);
+  let resolvePort: (port: number) => void;
+  const portPromise = new Promise<number>((resolve) => {
+    resolvePort = resolve;
+  });
+  const handle = serve(compiled, { port: 0, onListen: (info) => resolvePort(info.port) });
+  const port = await portPromise;
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      const ws = new WebSocket(`ws://localhost:${port}/ws`);
+      ws.addEventListener("open", () => ws.send("hi"));
+      ws.addEventListener("message", (event) => {
+        try {
+          assert.equal(event.data, "echo: hi");
+          ws.close();
+          resolvePromise();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      ws.addEventListener("error", (event) => reject(new Error(String((event as { message?: string }).message))));
+    });
+  } finally {
+    await handle[Symbol.asyncDispose]();
+  }
 });

@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `adapters/node`'s `serve()` now delegates to
+  [`leserve`](https://github.com/johnhenry/leserve)'s own `serve()`
+  instead of maintaining a second, independently-drifting Node HTTP
+  bridge -- same "prefer an existing, more mature implementation" reflex
+  this design already applied to `Request`/`Response`/`Headers`/
+  `URLPattern`. `leserve` is an optional peer dependency, only needed if
+  you use this adapter. The returned handle's shape changed to match
+  leserve's own (`{ finished, [Symbol.asyncDispose]() }` instead of a
+  raw `node:http` `Server`) -- read the listening port via the new
+  `onListen` option instead of `server.address()`, and dispose via
+  `await handle[Symbol.asyncDispose]()` instead of `server.close()`.
+
+### Added
+- `upgradeWebSocket()`'s Node branch is now real (was: throws a clear
+  "no implementation" error). Delegates to `leserve`'s
+  `upgradeRawSocket()`, reached via `req.raw` -- the raw `IncomingMessage`
+  `leserve`'s `serve()` already attaches to every `Request` it
+  constructs. Verified with a real client `WebSocket` round-trip test
+  against the real Node adapter, not just a unit test.
+- Trailers (`trailers` prop / `Route`'s `headers`-adjacent mechanism) are
+  now actually transmitted on Node, via `leserve`'s new `setTrailers()` --
+  previously computed and validated but never wired to a real
+  `res.addTrailers()` call.
+
+### Fixed
+- `compile.ts` assumed every route handler's return value was a real
+  `Response` (accessing `.headers` unconditionally) -- a completed
+  WebSocket upgrade can't be one (the Fetch spec's `Response` constructor
+  rejects status 101), so returning `upgradeWebSocket()`'s response from
+  a route crashed on header-merging. Now recognized purely by
+  `.status === 101` and passed through untouched.
+
 ## 0.0.0
 
 Initial release. servable is `fileable`'s sibling: the same technique (own

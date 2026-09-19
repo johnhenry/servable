@@ -165,13 +165,16 @@ one, and only add sugar for genuine gaps.
   every modern runtime models an upgrade as still returning a `Response`
   (status 101, socket attached), just with different upgrade mechanics.
   `upgradeWebSocket(req)` abstracts that for **Deno and Cloudflare
-  Workers** (both trivial, the platform does the hard work). **Node has no
-  implementation in this version** -- Node has no built-in server-side
-  WebSocket upgrade/framing at all (only a client `WebSocket` global since
-  v22), and implementing that correctly from a raw socket (handshake,
-  opcodes, masking, fragmentation, ping/pong, close frames) is real
-  protocol work; `upgradeWebSocket()` throws a clear error on Node rather
-  than shipping an unverified bridge.
+  Workers** (both trivial, the platform does the hard work) and **Node**
+  (via [`leserve`](https://github.com/johnhenry/leserve)'s
+  `upgradeRawSocket()`, lazily imported -- Node has no built-in
+  server-side WebSocket upgrade/framing at all, only a client `WebSocket`
+  global since v22, so this delegates to `leserve` rather than
+  reimplementing the handshake). The socket the Node branch resolves is a
+  `ws` library `WebSocket` (`.on('message', ...)`), not the DOM
+  `EventTarget`-style `WebSocket` Deno/Workers hand back
+  (`.addEventListener(...)`) -- a real, unavoidable API difference across
+  runtimes, not a bug.
 
 ## Headers and trailers
 
@@ -249,13 +252,21 @@ import { toWorker } from "@johnhenry/servable/adapters/cloudflare"; // export de
 ```
 
 **Node** needs a real bridge -- `node:http` speaks `IncomingMessage`/
-`ServerResponse`, not `Request`/`Response` -- so `adapters/node`'s `serve()`
-does the actual work: headers, streamed bodies both directions, and
-(best-effort) HTTP trailers via `res.addTrailers()`.
+`ServerResponse`, not `Request`/`Response`. Rather than maintaining a
+second, independently-drifting implementation of that conversion,
+`adapters/node`'s `serve()` delegates to
+[`leserve`](https://github.com/johnhenry/leserve)'s own `serve()`, which
+already solves it (multi-value headers like repeated `Set-Cookie`, stream
+error forwarding, the malformed-request-target edge case) -- the same
+"prefer an existing, more mature implementation over reinventing it"
+discipline this whole design leaned on for `Request`/`Response`/
+`Headers`/`URLPattern`. `leserve` is an **optional peer dependency**, only
+needed if you use this adapter.
 
 ```ts
 import { serve } from "@johnhenry/servable/adapters/node";
-serve(compiled, { port: 3000 });
+const handle = serve(compiled, { port: 3000, onListen: (info) => console.log(info.path) });
+// later: await handle[Symbol.asyncDispose]();
 ```
 
 ## Non-goals

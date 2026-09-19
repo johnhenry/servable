@@ -76,14 +76,19 @@
     "urlpattern-polyfill": "^10.0.0"
   },
   "peerDependencies": {
-    "@johnhenry/fileable": ">=0.0.0"
+    "@johnhenry/fileable": ">=0.0.0",
+    "leserve": ">=0.0.0"
   },
   "peerDependenciesMeta": {
     "@johnhenry/fileable": {
       "optional": true
+    },
+    "leserve": {
+      "optional": true
     }
   },
   "devDependencies": {
+    "leserve": "file:../leserve",
     "@johnhenry/fileable": "^0.0.0",
     "@types/node": "^26.6.1",
     "typescript": "^7.0.2"
