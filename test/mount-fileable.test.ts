@@ -1,0 +1,71 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Dir, File } from "@johnhenry/fileable";
+import { compile } from "../src/compile.js";
+import { Group, Router } from "../src/components.js";
+
+test("mounting a fileable tree serves its contents at the Group's prefix, stripping the root's own name", async () => {
+  const site = Dir({
+    name: "dist",
+    children: [File({ name: "index.html", children: ["<h1>Home</h1>"] })],
+  });
+  const compiled = await compile(Router({ children: Group({ prefix: "/static", from: site }) }));
+  const res = await compiled.fetch(new Request("http://x/static/index.html"));
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type")!, /text\/html/);
+  assert.equal(await res.text(), "<h1>Home</h1>");
+});
+
+test("a directory's index.html also serves at the directory's own path", async () => {
+  const site = Dir({
+    name: "dist",
+    children: [
+      File({ name: "index.html", children: ["home"] }),
+      Dir({ name: "docs", children: [File({ name: "index.html", children: ["docs home"] })] }),
+    ],
+  });
+  const compiled = await compile(Router({ children: Group({ prefix: "/static", from: site }) }));
+  const rootRes = await compiled.fetch(new Request("http://x/static/"));
+  assert.equal(await rootRes.text(), "home");
+  const docsRes = await compiled.fetch(new Request("http://x/static/docs"));
+  assert.equal(await docsRes.text(), "docs home");
+});
+
+test("a fileable symlink artifact becomes a Redirect, not a duplicate route", async () => {
+  const target = File({ name: "hello.html", children: ["HELLO"] });
+  const link = File({ name: "latest", symlink: target });
+  const site = Dir({ name: "dist", children: [target, link] });
+  const compiled = await compile(Router({ children: Group({ prefix: "/static", from: site }) }));
+  const res = await compiled.fetch(new Request("http://x/static/latest", { redirect: "manual" }));
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get("Location"), "/static/hello.html");
+});
+
+test("a fileable src-backed binary artifact (a real PNG) mounts byte-exact", async () => {
+  const pngPath = join(process.cwd(), "test/fixtures/logo.png");
+  const original = await readFile(pngPath);
+  const site = Dir({ name: "dist", children: [File({ name: "logo.png", src: pngPath })] });
+  const compiled = await compile(Router({ children: Group({ prefix: "/static", from: site }) }));
+  const res = await compiled.fetch(new Request("http://x/static/logo.png"));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "image/png");
+  const served = Buffer.from(await res.arrayBuffer());
+  assert.ok(served.equals(original));
+});
+
+test("Group from={fileableTree} composes with an explicit sibling Route in the same Group", async () => {
+  const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["mounted"] })] });
+  const { Route } = await import("../src/components.js");
+  const tree = Router({
+    children: Group({
+      prefix: "/static",
+      from: site,
+      children: Route({ path: "/extra", method: "GET", children: ["explicit"] }),
+    }),
+  });
+  const compiled = await compile(tree);
+  assert.equal(await (await compiled.fetch(new Request("http://x/static/index.html"))).text(), "mounted");
+  assert.equal(await (await compiled.fetch(new Request("http://x/static/extra"))).text(), "explicit");
+});
