@@ -168,7 +168,7 @@ export async function upgradeWebSocket(req: Request): Promise<{ socket: WebSocke
   }
   const raw = (req as unknown as { raw?: unknown }).raw;
   if (raw) {
-    const { upgradeRawSocket, WEBSOCKET_UPGRADE_RESPONSE } = await import("leserve/websocket");
+    const { upgradeRawSocket, WEBSOCKET_UPGRADE_RESPONSE } = await import("@johnhenry/leserve/websocket");
     const socket = await upgradeRawSocket(raw);
     return {
       socket: socket as unknown as WebSocket,

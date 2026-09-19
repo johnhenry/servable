@@ -16,7 +16,7 @@
  * eventual result) throws instead of silently stringifying to
  * "[object Promise]".
  */
-import { FRAGMENT, isDescriptor, isLinkRef, isThenable, ServableError } from "./types.js";
+import { FRAGMENT, isDescriptor, isFileableDescriptor, isLinkRef, isThenable, ServableError } from "./types.js";
 import type { Descriptor, DescriptorChild } from "./types.js";
 
 export function build(root: unknown): Descriptor[] {
@@ -48,6 +48,21 @@ export function build(root: unknown): Descriptor[] {
         continue;
       }
       if (isDescriptor(item)) {
+        if (isFileableDescriptor(item)) {
+          // Opaque pass-through: a fileable descriptor's own children are
+          // *its* internal content (text, nested markup, other fileable
+          // primitives), not servable JSX -- recursing into them with
+          // servable's own normalization rules (number->string coercion,
+          // rejecting a bare Promise/function as content, assigning a
+          // servable __id) would apply the wrong package's rules to
+          // content that hasn't been handed to fileable's own pipeline
+          // yet. Resolve is where this actually gets mounted (via
+          // mountFileableTree, which runs fileable's own build/resolve/
+          // layout stages on the untouched tree) -- Build's job here is
+          // just to leave it alone.
+          flat.push(item);
+          continue;
+        }
         flat.push(...normalizeOne(item));
         continue;
       }

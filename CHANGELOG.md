@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Added
+- **A fileable tree can now sit directly as a raw child of `<Router>`/
+  `<Group>`, not just behind `from=`.** Both frameworks' JSX is sugar over
+  plain `{tag,props,children}`-producing factory functions, so
+  `Router({ children: [Dir({...}), Route({...})] })` was already legal
+  JavaScript -- the gap was that Build/Resolve didn't recognize a raw
+  fileable descriptor as anything other than an unrecognized servable
+  node. Detection now uses `FILEABLE_DESCRIPTOR`, a
+  `Symbol.for("fileable.descriptor")` global-registry brand
+  `@johnhenry/fileable@0.0.1`+ stamps onto every descriptor it creates,
+  replacing the old `{tag,props,children}`-shape duck typing (which was
+  only ever safe because it was called exclusively on `from=`'s value --
+  every servable descriptor has that identical shape too, so it couldn't
+  tell them apart once a fileable node might appear anywhere a servable
+  node could). This revises the governing rule: children are now a static
+  value, nested servable primitives, *or* a fileable tree -- scoped to
+  `Router`/`Group` specifically, not `Route`'s children (a different,
+  static-value slot).
+
+### Fixed
+- `compile()`'s pre-Build tree clone (`cloneDescriptorTree`) reconstructed
+  every descriptor-shaped value field by field, which silently stripped
+  the `FILEABLE_DESCRIPTOR` brand (a plain object literal has no reason to
+  carry an unrelated package's symbol-keyed property) -- meaning a second
+  `compile()` call on the same tree would fail to recognize a fileable
+  tree the first call had correctly mounted. A fileable-branded value is
+  now treated as opaque and cloned by reference, same as any other opaque
+  prop value (`Blob`, `Request`, a function).
+- The dev dependency on `leserve` pointed at a local `file:../leserve`
+  path, which can't resolve for anyone outside this machine. `leserve`
+  was adopted into the `@johnhenry` scope and published for real; the
+  peer/dev dependencies here now point at the real `@johnhenry/leserve`.
+
 ### Changed
 - `adapters/node`'s `serve()` now delegates to
   [`leserve`](https://github.com/johnhenry/leserve)'s own `serve()`

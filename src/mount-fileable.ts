@@ -26,15 +26,10 @@ import { inferContentType } from "./serve-file.js";
 import { ServableError } from "./types.js";
 import type { Descriptor, FileableTreeLike } from "./types.js";
 
-export function looksLikeFileableDescriptor(value: unknown): value is FileableTreeLike {
-  return (
-    !!value &&
-    typeof value === "object" &&
-    "tag" in (value as object) &&
-    "props" in (value as object) &&
-    "children" in (value as object)
-  );
-}
+// isFileableDescriptor() moved to types.ts, so cloneDescriptorTree (which
+// runs before Build ever sees the tree) can use it too without a circular
+// import -- see the comment there for the full reasoning on why it's a
+// Symbol.for() registry key rather than an import of @johnhenry/fileable.
 
 interface FileableArtifact {
   kind: "file" | "dir";

@@ -69,3 +69,50 @@ test("Group from={fileableTree} composes with an explicit sibling Route in the s
   assert.equal(await (await compiled.fetch(new Request("http://x/static/index.html"))).text(), "mounted");
   assert.equal(await (await compiled.fetch(new Request("http://x/static/extra"))).text(), "explicit");
 });
+
+test("a fileable tree placed directly as a Group's raw child mounts the same way from={tree} does", async () => {
+  // The actual point: no `from=` at all -- Dir()'s result sits directly in
+  // Group's children, same as any other nested servable primitive would.
+  const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["direct child"] })] });
+  const tree = Router({ children: Group({ prefix: "/static", children: [site] }) });
+  const compiled = await compile(tree);
+  const res = await compiled.fetch(new Request("http://x/static/index.html"));
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "direct child");
+});
+
+test("a fileable tree as a raw child of Router (no Group at all) mounts at the root", async () => {
+  const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["root mount"] })] });
+  const tree = Router({ children: [site] });
+  const compiled = await compile(tree);
+  assert.equal(await (await compiled.fetch(new Request("http://x/index.html"))).text(), "root mount");
+});
+
+test("a fileable tree as a raw child composes with an explicit sibling Route in the same Group", async () => {
+  const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["mounted"] })] });
+  const { Route } = await import("../src/components.js");
+  const tree = Router({
+    children: Group({
+      prefix: "/static",
+      children: [site, Route({ path: "/extra", method: "GET", children: ["explicit"] })],
+    }),
+  });
+  const compiled = await compile(tree);
+  assert.equal(await (await compiled.fetch(new Request("http://x/static/index.html"))).text(), "mounted");
+  assert.equal(await (await compiled.fetch(new Request("http://x/static/extra"))).text(), "explicit");
+});
+
+test("compile() called twice on the same tree with a raw fileable child doesn't leak mutations", async () => {
+  // Regression guard for the actual bug found while building this: compile()
+  // clones the tree before Build runs (see cloneDescriptorTree), and that
+  // clone used to silently strip the FILEABLE_DESCRIPTOR brand by
+  // reconstructing every descriptor-shaped value field-by-field -- so the
+  // *second* compile() call would fail to recognize the same fileable tree
+  // it correctly mounted on the first call.
+  const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["stable"] })] });
+  const tree = Router({ children: Group({ prefix: "/static", children: [site] }) });
+  const first = await compile(tree);
+  const second = await compile(tree);
+  assert.equal(await (await first.fetch(new Request("http://x/static/index.html"))).text(), "stable");
+  assert.equal(await (await second.fetch(new Request("http://x/static/index.html"))).text(), "stable");
+});

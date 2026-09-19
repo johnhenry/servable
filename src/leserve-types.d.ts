@@ -5,7 +5,7 @@
  * mirror of leserve's public surface. Keep in sync with leserve's own
  * JSDoc if either changes.
  */
-declare module "leserve" {
+declare module "@johnhenry/leserve" {
   export interface ServeOptions {
     port?: number;
     hostname?: string;
@@ -22,7 +22,7 @@ declare module "leserve" {
   export default function serve(handler: ServeHandler, options?: ServeOptions): ServeHandle;
 }
 
-declare module "leserve/websocket" {
+declare module "@johnhenry/leserve/websocket" {
   // The `ws` library's WebSocket (EventEmitter-based, `.on('message', ...)`)
   // -- structurally typed here rather than importing `ws`'s own types, to
   // avoid an extra type-only devDependency for one return type.
@@ -35,7 +35,7 @@ declare module "leserve/websocket" {
   export const WEBSOCKET_UPGRADE_RESPONSE: { status: 101 };
 }
 
-declare module "leserve/trailers" {
+declare module "@johnhenry/leserve/trailers" {
   export function setTrailers(response: Response, trailers: HeadersInit | Promise<HeadersInit>): void;
   export function getTrailers(response: Response): Promise<HeadersInit> | undefined;
 }

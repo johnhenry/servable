@@ -14,8 +14,8 @@
  * to the `Request` it constructs (`req.raw`), which is exactly what
  * `leserve`'s `upgradeRawSocket()` needs.
  */
-import serveLeserve from "leserve";
-import { setTrailers } from "leserve/trailers";
+import serveLeserve from "@johnhenry/leserve";
+import { setTrailers } from "@johnhenry/leserve/trailers";
 import { pendingTrailers } from "../src/compile.js";
 import type { CompileResult } from "../src/types.js";
 

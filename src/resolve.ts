@@ -18,10 +18,10 @@
 import { extname, isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { glob } from "glob";
-import { isDescriptor, isLinkRef, isThenable, ServableError } from "./types.js";
+import { isDescriptor, isFileableDescriptor, isLinkRef, isThenable, ServableError } from "./types.js";
 import type { CompileOptions, Descriptor, DescriptorChild } from "./types.js";
 import { splitGlobBase, toPosixPattern } from "./glob-util.js";
-import { mountFileableTree, looksLikeFileableDescriptor } from "./mount-fileable.js";
+import { mountFileableTree } from "./mount-fileable.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -92,7 +92,7 @@ export async function resolve(roots: Descriptor[], options: CompileOptions = {})
   async function resolveNode(node: Descriptor, path: string): Promise<void> {
     if (node.tag === "group" && node.props.from !== undefined) {
       const fromValue = node.props.from;
-      if (looksLikeFileableDescriptor(fromValue)) {
+      if (isFileableDescriptor(fromValue)) {
         const mounted = await mountFileableTree(fromValue, path);
         node.children = [...mounted, ...node.children];
       } else {
@@ -141,8 +141,30 @@ export async function resolve(roots: Descriptor[], options: CompileOptions = {})
       }
     }
 
-    for (const child of node.children) {
-      await resolveChild(child, `${path} > ${String(node.tag)}`);
+    // A fileable descriptor (<Dir>/<File>/<Rm>, or generic markup nested
+    // under one) placed directly as a child of <Router>/<Group> -- not just
+    // behind `from=` -- is mounted the same way `from={fileableTree}` is.
+    // Scoped to router/group (the containment/scope primitives) rather than
+    // every node, since e.g. a Route's children are a *static value* slot,
+    // a different semantic than "nested primitives" -- mixing the two would
+    // make an accidental fileable descriptor in a Route's content silently
+    // ambiguous instead of clearly out of scope.
+    const childPath = `${path} > ${String(node.tag)}`;
+    if (node.tag === "router" || node.tag === "group") {
+      const resolvedChildren: DescriptorChild[] = [];
+      for (const child of node.children) {
+        if (isDescriptor(child) && isFileableDescriptor(child)) {
+          resolvedChildren.push(...(await mountFileableTree(child, childPath)));
+          continue;
+        }
+        await resolveChild(child, childPath);
+        resolvedChildren.push(child);
+      }
+      node.children = resolvedChildren;
+    } else {
+      for (const child of node.children) {
+        await resolveChild(child, childPath);
+      }
     }
   }
 

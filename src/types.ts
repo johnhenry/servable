@@ -144,6 +144,24 @@ export function isDescriptor(value: unknown): value is Descriptor {
   );
 }
 
+// A global-symbol-registry key, not an import -- `Symbol.for("fileable.descriptor")`
+// resolves to the exact same symbol `@johnhenry/fileable` stamps onto every
+// descriptor it creates (see its src/types.ts), with zero coupling to that
+// package's module graph. `@johnhenry/fileable` is an *optional* peer
+// dependency; a real import here would defeat the point of it being lazy.
+// Lives here (not in mount-fileable.ts, which is where it's mainly used)
+// so `cloneDescriptorTree`, below, can check it too without a circular
+// import -- `isDescriptor` alone can't tell a fileable descriptor apart
+// from a servable one (both packages produce the identical
+// {tag,props,children} shape), which matters here specifically because
+// cloneNode reconstructs a plain {tag,props,children} object field by
+// field and would otherwise silently strip this exact symbol-keyed brand.
+const FILEABLE_DESCRIPTOR = Symbol.for("fileable.descriptor");
+
+export function isFileableDescriptor(value: unknown): value is FileableTreeLike {
+  return !!value && typeof value === "object" && FILEABLE_DESCRIPTOR in value;
+}
+
 /**
  * linkTo() cannot resolve its target synchronously -- Layout, which owns the
  * final route table, runs after Build/Resolve. It returns this marker
@@ -185,6 +203,17 @@ function cloneNode(value: unknown, memo: WeakMap<object, unknown>): unknown {
     memo.set(value, cloned);
     for (const item of value) cloned.push(cloneNode(item, memo));
     return cloned;
+  }
+  // Opaque, by reference -- reconstructing it field-by-field the way a
+  // servable descriptor is cloned below would silently drop the
+  // FILEABLE_DESCRIPTOR brand (a plain {tag,props,children} object literal
+  // has no reason to carry an unrelated package's symbol-keyed property),
+  // and would apply servable's own clone semantics to what's actually
+  // fileable's internal content. Mounting (mountFileableTree) runs
+  // fileable's own pipeline on it fresh later and never mutates its input,
+  // so cloning it here has no purpose anyway.
+  if (isDescriptor(value) && isFileableDescriptor(value)) {
+    return value;
   }
   if (isDescriptor(value)) {
     const cloned: Descriptor = { tag: value.tag, props: {}, children: [] };
