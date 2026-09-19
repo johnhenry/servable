@@ -1,0 +1,5 @@
+# Exact byte content matters for these fixtures (Range/ETag/byte-count
+# tests) -- `binary` disables Git's line-ending conversion entirely, same
+# fix fileable needed for its own binary test fixtures.
+*.png binary
+test/fixtures/range-test.txt binary
