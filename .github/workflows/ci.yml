@@ -15,8 +15,27 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: servable
+      # lemem isn't published yet -- the examples/08-mount-lemem example and
+      # its regression test use it via a devDependency on file:../lemem,
+      # which needs a sibling checkout to resolve. Drop this once lemem is
+      # published for real (see how leserve's own equivalent workaround was
+      # removed once @johnhenry/leserve was published).
+      - uses: actions/checkout@v4
+        with:
+          repository: johnhenry/lemem
+          path: lemem
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      - run: npm ci
+      # --install-links: without it, npm's file:../lemem devDependency
+      # doesn't install *lemem's own* dependencies (cbor) at all -- confirmed
+      # by reproducing it in a clean install, not just reasoning about it.
+      # This flag makes npm treat a file: dependency as a real packed
+      # install instead of a shallow symlink, which resolves its
+      # transitive deps normally.
+      - run: npm ci --install-links
+        working-directory: servable
       - run: npm test
+        working-directory: servable

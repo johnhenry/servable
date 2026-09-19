@@ -91,6 +91,7 @@
     "@johnhenry/leserve": "^0.0.0",
     "@johnhenry/fileable": "^0.0.1",
     "@types/node": "^26.6.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "lemem": "file:../lemem"
   }
 }

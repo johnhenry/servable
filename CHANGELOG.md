@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- **`examples/08-mount-lemem`**: composing a `lemem`-packaged directory
+  into a servable tree needs no new servable primitive at all -- `lemem`'s
+  `createRouter()` already produces a `(Request | path, ctx?) => Response`
+  handler, the exact shape `Route`'s `handler` prop already accepts.
+  `Route path="/*"` inside a `Group prefix` captures the request's
+  mount-relative path as `ctx.params["0"]` (`URLPattern`'s own
+  wildcard-capture key) -- hand that straight to the router instead of the
+  full request. `lemem` isn't published yet, so this is a devDependency on
+  `file:../lemem` for now (CI checks it out as a sibling); switch to a
+  real registry range once it's published, same as `leserve` did.
 - **A fileable tree can now sit directly as a raw child of `<Router>`/
   `<Group>`, not just behind `from=`.** Both frameworks' JSX is sugar over
   plain `{tag,props,children}`-producing factory functions, so

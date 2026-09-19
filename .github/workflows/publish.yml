@@ -13,19 +13,31 @@ jobs:
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: servable
+
+      # lemem isn't published yet -- see the identical comment in ci.yml.
+      # Drop this (and --install-links below) once it is.
+      - uses: actions/checkout@v4
+        with:
+          repository: johnhenry/lemem
+          path: lemem
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - run: npm ci
+      - run: npm ci --install-links
+        working-directory: servable
 
       - run: npm test
+        working-directory: servable
 
       - name: Publish
         # Idempotent: `npm view` exits non-zero for a version that isn't on
         # the registry yet, which is the signal to publish.
+        working-directory: servable
         run: |
           PKG_NAME=$(node -p "require('./package.json').name")
           PKG_VERSION=$(node -p "require('./package.json').version")
