@@ -45,7 +45,7 @@ test("a NotFound handler function is called just like a Route handler", async ()
 test("the scope's Use/ErrorBoundary chain wraps its own NotFound too", async () => {
   const tree = Router({
     children: Use({
-      middleware: async (req: Request, next: () => Promise<Response>) => {
+      middleware: async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
         const res = await next();
         res.headers.set("X-Wrapped", "1");
         return res;

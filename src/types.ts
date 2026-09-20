@@ -32,7 +32,7 @@ export interface RouteContext {
 
 export type Handler = (req: Request, ctx: RouteContext) => Response | Promise<Response>;
 export type NextFn = () => Promise<Response>;
-export type Middleware = (req: Request, next: NextFn, ctx: RouteContext) => Response | Promise<Response>;
+export type Middleware = (req: Request, ctx: RouteContext, next: NextFn) => Response | Promise<Response>;
 export type ErrorHandler = (error: unknown, req: Request, ctx: RouteContext) => Response | Promise<Response>;
 
 /** Same union the Fetch API's own HeadersInit already defines -- see api.ts's mergeHeaders. */

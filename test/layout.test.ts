@@ -56,13 +56,13 @@ test("Use/ErrorBoundary chain is built from containment, not sibling order", () 
   // reintroducing the position-sensitivity that was explicitly rejected
   // for <Use> during design.
   const order: string[] = [];
-  const outer = async (req: Request, next: () => Promise<Response>) => {
+  const outer = async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
     order.push("outer-in");
     const res = await next();
     order.push("outer-out");
     return res;
   };
-  const inner = async (req: Request, next: () => Promise<Response>) => {
+  const inner = async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
     order.push("inner-in");
     const res = await next();
     order.push("inner-out");

@@ -154,7 +154,7 @@ async function runChain(chain: WrapperFrame[], req: Request, ctx: RouteContext, 
     const frame = chain[i];
     if (!frame) return core();
     if (frame.kind === "use") {
-      return frame.middleware(req, () => dispatch(i + 1), ctx);
+      return frame.middleware(req, ctx, () => dispatch(i + 1));
     }
     // errorboundary
     try {

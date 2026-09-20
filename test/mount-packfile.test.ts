@@ -1,23 +1,23 @@
 /**
- * `lemem`'s `createRouter()` composes directly with `Route`'s `handler`
+ * `packfile`'s `createRouter()` composes directly with `Route`'s `handler`
  * prop -- no new servable primitive/module needed, unlike fileable (a
  * *description* servable has to walk and map to routes). This is a
  * regression guard for that composition contract, not a new integration
  * surface: mainly, that `ctx.params["0"]` (URLPattern's wildcard-capture
  * key) is really what a `Group prefix`-mounted `Route path="/*"` hands
- * you, and that it's really what lemem's router expects as a bare path.
+ * you, and that it's really what packfile's router expects as a bare path.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fromDirectory, createRouter } from "lemem";
+import { fromDirectory, createRouter } from "@johnhenry/packfile";
 import { compile } from "../src/compile.js";
 import { Group, Route, Router } from "../src/components.js";
 
 async function withSite(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), "servable-mount-lemem-"));
+  const root = await mkdtemp(join(tmpdir(), "servable-mount-packfile-"));
   try {
     await writeFile(join(root, "index.html"), "home");
     await mkdir(join(root, "docs"));
@@ -28,7 +28,7 @@ async function withSite(run: (root: string) => Promise<void>): Promise<void> {
   }
 }
 
-test("a lemem router mounted via Route's handler prop serves the packaged directory", async () => {
+test("a packfile router mounted via Route's handler prop serves the packaged directory", async () => {
   await withSite(async (root) => {
     const files = await fromDirectory(root);
     const router = createRouter(files, { tryExtensions: [".html"], alias: { "": "index.html" } });

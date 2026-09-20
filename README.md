@@ -97,8 +97,10 @@ natively) or through an adapter (Node needs one -- see below).
     JSX position rather than serializing as one JSON array -- use
     `handler={() => Response.json(arr)}` for a list.
 - **`Use middleware={fn}>{children}</Use>`** -- wraps a subtree. Signature
-  `(req, next, ctx) => Response | Promise<Response>`; not calling `next()`
-  is the short-circuit (no special ceremony). Composition is **onion-style**
+  `(req, ctx, next) => Response | Promise<Response>` -- `(req, ctx)` matches
+  every other handler shape in the family (`Route`'s `handler`,
+  `ErrorBoundary`'s `handler`), with `next` appended last; not calling
+  `next()` is the short-circuit (no special ceremony). Composition is **onion-style**
   -- outermost runs first going in, last coming out, and since handlers are
   Fetch-shaped (no mutable `res`), a middleware can still inspect/modify
   the final `Response` after `await next()` resolves.

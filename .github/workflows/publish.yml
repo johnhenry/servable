@@ -16,12 +16,12 @@ jobs:
         with:
           path: servable
 
-      # lemem isn't published yet -- see the identical comment in ci.yml.
+      # packfile isn't published yet -- see the identical comment in ci.yml.
       # Drop this (and --install-links below) once it is.
       - uses: actions/checkout@v4
         with:
-          repository: johnhenry/lemem
-          path: lemem
+          repository: johnhenry/packfile
+          path: packfile
 
       - uses: actions/setup-node@v4
         with:

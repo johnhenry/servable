@@ -19,7 +19,7 @@ test("Redirect's default status is 301", async () => {
 test("a Redirect nested inside <Use> is wrapped by it too, same as a Route", async () => {
   const tree = Router({
     children: Use({
-      middleware: async (req: Request, next: () => Promise<Response>) => {
+      middleware: async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
         const res = await next();
         res.headers.set("X-Wrapped", "1");
         return res;

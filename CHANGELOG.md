@@ -2,17 +2,28 @@
 
 ## Unreleased
 
+### Changed (breaking)
+- **`Middleware`'s signature is now `(req, ctx, next)`, was `(req, next,
+  ctx)`.** `ctx` moving next to `req` makes it a true prefix of every other
+  handler shape in the family (`Route`'s `handler(req, ctx)`,
+  `ErrorBoundary`'s `handler(error, req, ctx)`) instead of the one place in
+  servable where `ctx` sat in a different position; `next` moving last also
+  matches Express's own middleware convention. Any existing middleware
+  written as `(req, next) => ...` needs updating to `(req, ctx, next) =>
+  ...` -- the second positional argument is no longer the continuation
+  function.
+
 ### Added
-- **`examples/08-mount-lemem`**: composing a `lemem`-packaged directory
-  into a servable tree needs no new servable primitive at all -- `lemem`'s
-  `createRouter()` already produces a `(Request | path, ctx?) => Response`
-  handler, the exact shape `Route`'s `handler` prop already accepts.
-  `Route path="/*"` inside a `Group prefix` captures the request's
+- **`examples/08-mount-packfile`**: composing a `packfile`-packaged
+  directory into a servable tree needs no new servable primitive at all --
+  `packfile`'s `createRouter()` already produces a `(Request | path, ctx?)
+  => Response` handler, the exact shape `Route`'s `handler` prop already
+  accepts. `Route path="/*"` inside a `Group prefix` captures the request's
   mount-relative path as `ctx.params["0"]` (`URLPattern`'s own
   wildcard-capture key) -- hand that straight to the router instead of the
-  full request. `lemem` isn't published yet, so this is a devDependency on
-  `file:../lemem` for now (CI checks it out as a sibling); switch to a
-  real registry range once it's published, same as `leserve` did.
+  full request. `packfile` isn't published yet, so this is a devDependency
+  on `file:../packfile` for now (CI checks it out as a sibling); switch to
+  a real registry range once it's published, same as `leserve` did.
 - **A fileable tree can now sit directly as a raw child of `<Router>`/
   `<Group>`, not just behind `from=`.** Both frameworks' JSX is sugar over
   plain `{tag,props,children}`-producing factory functions, so

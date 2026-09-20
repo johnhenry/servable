@@ -5,7 +5,7 @@ import { Route, Router, Use } from "../src/components.js";
 
 test("onion composition: outermost runs first going in, last coming out", async () => {
   const order: string[] = [];
-  const mw = (label: string) => async (req: Request, next: () => Promise<Response>) => {
+  const mw = (label: string) => async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
     order.push(`${label}-in`);
     const res = await next();
     order.push(`${label}-out`);
@@ -38,7 +38,7 @@ test("not calling next() short-circuits -- no special ceremony needed", async ()
 test("a middleware can inspect/modify the final Response after next() resolves (only possible because handlers are Fetch-shaped, no mutable res)", async () => {
   const tree = Router({
     children: Use({
-      middleware: async (req: Request, next: () => Promise<Response>) => {
+      middleware: async (req: Request, ctx: unknown, next: () => Promise<Response>) => {
         const res = await next();
         res.headers.set("X-Timing", "measured");
         return res;

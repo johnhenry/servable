@@ -92,6 +92,6 @@
     "@johnhenry/fileable": "^0.0.1",
     "@types/node": "^26.6.1",
     "typescript": "^7.0.2",
-    "lemem": "file:../lemem"
+    "@johnhenry/packfile": "file:../packfile"
   }
 }

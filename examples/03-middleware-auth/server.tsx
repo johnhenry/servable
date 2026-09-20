@@ -15,14 +15,14 @@ import { Router, Group, Route, Use, ErrorBoundary, compile } from "@johnhenry/se
 import { serve } from "@johnhenry/servable/adapters/node";
 import type { Middleware } from "@johnhenry/servable";
 
-const requireAuth: Middleware = async (req, next) => {
+const requireAuth: Middleware = async (req, ctx, next) => {
   if (req.headers.get("Authorization") !== "Bearer secret") {
     return new Response("unauthorized", { status: 401 });
   }
   return next();
 };
 
-const logTiming: Middleware = async (req, next) => {
+const logTiming: Middleware = async (req, ctx, next) => {
   const start = Date.now();
   const res = await next();
   res.headers.set("X-Response-Time", `${Date.now() - start}ms`);
