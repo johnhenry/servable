@@ -241,6 +241,41 @@ reimplemented partially (build a `<Route src>`/`serveFile()` route by hand
 for a zip download in the meantime). A fileable `Rm` node has nothing to
 serve; skipped with a warning.
 
+### Mounting without `from=`
+
+`from=` isn't the only way in -- a fileable tree can sit directly as a raw
+child of `<Router>`/`<Group>`, exactly like any other nested servable
+primitive, since both frameworks' JSX is sugar over plain
+`{tag,props,children}`-producing factory functions:
+
+```tsx
+import { Dir, File } from "@johnhenry/fileable";
+import { Router, Group, Route, compile } from "@johnhenry/servable";
+
+const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["<h1>Home</h1>"] })] });
+
+// Under a Group prefix, alongside an explicit sibling Route:
+const app1 = (
+  <Router>
+    <Group prefix="/static">
+      {site}
+      <Route path="/api" method="GET">{{ ok: true }}</Route>
+    </Group>
+  </Router>
+);
+
+// Or directly under Router, no Group at all -- mounts at the root:
+const app2 = <Router>{site}</Router>;
+```
+
+Detection uses `FILEABLE_DESCRIPTOR`, a `Symbol.for("fileable.descriptor")`
+global-registry brand `@johnhenry/fileable@0.0.1`+ stamps onto every
+descriptor it creates -- so a raw fileable tree is recognized wherever a
+servable primitive could appear as a child of `Router`/`Group`, not just
+behind `from=`. Everything above (index.html-at-directory-path, symlink ->
+`Redirect`, archive/`Rm` handling) applies identically either way; `from=`
+and a raw child are two spellings of the same mount, not two features.
+
 ## Adapters
 
 `compiled.fetch` is a plain `(Request) => Promise<Response>` -- Deno, Bun,
