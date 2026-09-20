@@ -5,9 +5,12 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/johnhenry/servable.git"
+    "url": "git+https://github.com/johnhenry/servable.git"
   },
   "homepage": "https://opensource.johnhenry.me/servable/",
+  "bugs": {
+    "url": "https://github.com/johnhenry/servable/issues"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public",
