@@ -1,7 +1,21 @@
 /**
- * `<Group from={fileableTree}>`: mounts a fileable Descriptor tree's
- * artifacts as static routes -- fileable describes the virtual filesystem,
- * servable serves it, with zero disk writes in between.
+ * A fileable Descriptor tree mounted as a raw child of `<Group>`, written
+ * as literal `<Dir>`/`<File>` JSX nested directly inside servable's own
+ * `<Router>`/`<Group>` -- one file, one `@jsxImportSource
+ * @johnhenry/servable` pragma, both vocabularies used adjacently in the
+ * same expression. fileable describes the virtual filesystem, servable
+ * serves it, with zero disk writes in between.
+ *
+ * This works because servable's `jsx()` calls any function-typed tag
+ * directly with its props, so `<Dir>`/`<File>` (evaluated under
+ * servable's pragma) invoke fileable's own `Dir`/`File` functions and
+ * produce real fileable `Descriptor`s -- identical to calling them by
+ * hand. `Descriptor.tag`'s type is the general `symbol` (not each
+ * package's own exact `typeof FRAGMENT`) specifically so this
+ * type-checks; see the README's "Mounting without from=" section for the
+ * full story, including the equivalent `Dir({...})`/`{site}` function-call
+ * form for when the tree is built programmatically instead of written out
+ * literally.
  *
  * Run with:
  *   npm run build && node dist/examples/07-mount-fileable/server.js
@@ -9,38 +23,23 @@
  *   curl http://localhost:3006/site/                    # index.html at the dir's own path
  *   curl http://localhost:3006/site/about/index.html
  */
-/**
- * The fileable tree is built via plain function calls, not JSX -- fileable
- * and servable each declare their own nominal `Descriptor` type for their
- * own JSX runtime's type-checking, so `<Dir>`/`<File>` (fileable's JSX
- * tags) don't type-check as servable JSX elements in the same file even
- * though they work fine at runtime (mount-fileable.ts only ever duck-types
- * the shape). `Dir({...})`/`File({...})` sidesteps that entirely -- the
- * same "called directly as functions, no JSX needed" style fileable's own
- * docs already recommend.
- */
 /** @jsxImportSource @johnhenry/servable */
 import { Dir, File } from "@johnhenry/fileable";
 import { Router, Group, compile } from "@johnhenry/servable";
 import { serve } from "@johnhenry/servable/adapters/node";
 
-const site = Dir({
-  name: "dist",
-  children: [
-    File({
-      name: "index.html",
-      children: [`<!doctype html><html><body><h1>Home</h1><a href="/site/about/index.html">About</a></body></html>`],
-    }),
-    Dir({
-      name: "about",
-      children: [File({ name: "index.html", children: [`<!doctype html><html><body><h1>About</h1></body></html>`] })],
-    }),
-  ],
-});
-
 const app = (
   <Router>
-    <Group prefix="/site" from={site} />
+    <Group prefix="/site">
+      <Dir name="dist">
+        <File name="index.html">
+          {`<!doctype html><html><body><h1>Home</h1><a href="/site/about/index.html">About</a></body></html>`}
+        </File>
+        <Dir name="about">
+          <File name="index.html">{`<!doctype html><html><body><h1>About</h1></body></html>`}</File>
+        </Dir>
+      </Dir>
+    </Group>
   </Router>
 );
 

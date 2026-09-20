@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+- **`Descriptor.tag`'s type widened from `StructuralTag | typeof FRAGMENT |
+  string` to `StructuralTag | symbol | string`.** Enables writing a
+  fileable tree as *literal* `<Dir>`/`<File>` JSX nested directly inside
+  `<Router>`/`<Group>`, in the same file, under one
+  `@jsxImportSource @johnhenry/servable` pragma -- both frameworks' `jsx()`
+  already called function-typed tags directly at runtime, so this always
+  worked correctly at runtime; only the type-checker rejected it, because
+  fileable's own Fragment marker is a *different* `Symbol.for(...)` key
+  than servable's, and the old type only recognized servable's exact one.
+  See README's "Mounting without `from=`" for the full writeup and the
+  equivalent `Dir({...})`/`{site}` function-call form (still supported,
+  useful when the tree is built programmatically).
+
 ### Changed (breaking)
 - **`Middleware`'s signature is now `(req, ctx, next)`, was `(req, next,
   ctx)`.** `ctx` moving next to `req` makes it a true prefix of every other

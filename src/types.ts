@@ -105,8 +105,18 @@ export interface ResponseTagProps extends BaseProps {
   trailers?: TrailersInputOrFn;
 }
 
-/** Any tag that isn't one of the eight structural primitives is plain markup. */
-export type Tag = StructuralTag | typeof FRAGMENT | string;
+/**
+ * Any tag that isn't one of the eight structural primitives is plain
+ * markup. Widened to the general `symbol` type (not the exact `typeof
+ * FRAGMENT`) so a sibling package's own JSX runtime -- which necessarily
+ * has its own, differently-keyed Fragment symbol -- can type-check its
+ * `Descriptor` as a valid servable JSX element when its components (e.g.
+ * fileable's `<Dir>`/`<File>`) are nested directly inside `<Router>`/
+ * `<Group>`. See "Mounting without from=" below -- both runtimes already
+ * called function-typed tags directly at runtime; this only removes a
+ * false type error.
+ */
+export type Tag = StructuralTag | symbol | string;
 
 export interface Descriptor {
   tag: Tag;

@@ -246,26 +246,51 @@ serve; skipped with a warning.
 `from=` isn't the only way in -- a fileable tree can sit directly as a raw
 child of `<Router>`/`<Group>`, exactly like any other nested servable
 primitive, since both frameworks' JSX is sugar over plain
-`{tag,props,children}`-producing factory functions:
+`{tag,props,children}`-producing factory functions. That means fileable's
+own `<Dir>`/`<File>` tags can be written **literally, nested inside
+servable's `<Router>`/`<Group>` JSX, in the same expression** -- one file,
+one `@jsxImportSource @johnhenry/servable` pragma, both vocabularies used
+adjacently:
 
 ```tsx
+/** @jsxImportSource @johnhenry/servable */
 import { Dir, File } from "@johnhenry/fileable";
 import { Router, Group, Route, compile } from "@johnhenry/servable";
 
-const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["<h1>Home</h1>"] })] });
-
-// Under a Group prefix, alongside an explicit sibling Route:
-const app1 = (
+const app = (
   <Router>
     <Group prefix="/static">
-      {site}
+      <Dir name="dist">
+        <File name="index.html">{"<h1>Home</h1>"}</File>
+      </Dir>
       <Route path="/api" method="GET">{{ ok: true }}</Route>
     </Group>
   </Router>
 );
+```
 
-// Or directly under Router, no Group at all -- mounts at the root:
-const app2 = <Router>{site}</Router>;
+This works because servable's `jsx()` calls any function-typed tag
+directly with its props (`type(allProps)`) rather than treating it as
+markup -- so `<Dir>`/`<File>`, evaluated under servable's pragma, invoke
+fileable's *own* `Dir`/`File` functions and produce real fileable
+`Descriptor`s, identical to calling them by hand. `Descriptor.tag`'s type
+is widened to the general `symbol` (not each package's own exact `typeof
+FRAGMENT`) specifically so this type-checks: fileable's Fragment marker is
+a different `Symbol.for(...)` key than servable's, and without the
+widening, TypeScript rejects `<Dir>` as an invalid JSX component even
+though it already worked correctly at runtime.
+
+If you're building the tree programmatically (conditionally including a
+subtree, mapping over data) rather than writing it out literally, calling
+`Dir({...})`/`File({...})` as plain functions and embedding the result via
+`{}` works exactly the same way -- both forms produce the same value,
+JSX angle-bracket syntax is sugar over the function calls either way:
+
+```tsx
+const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["<h1>Home</h1>"] })] });
+const app2 = <Router><Group prefix="/static">{site}</Group></Router>;
+// or, with no Group at all -- mounts at the root:
+const app3 = <Router>{site}</Router>;
 ```
 
 Detection uses `FILEABLE_DESCRIPTOR`, a `Symbol.for("fileable.descriptor")`
