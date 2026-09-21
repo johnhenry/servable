@@ -23,10 +23,24 @@ jobs:
           repository: johnhenry/packfile
           path: packfile
 
+      # fileable isn't published with its current API yet -- see the
+      # identical comment in ci.yml. Drop this (and the build step below)
+      # once it is.
+      - uses: actions/checkout@v4
+        with:
+          repository: johnhenry/fileable
+          path: fileable
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci --install-links
+        working-directory: fileable
+
+      - run: npm run build
+        working-directory: fileable
 
       - run: npm ci --install-links
         working-directory: servable

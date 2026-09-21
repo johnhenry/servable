@@ -166,7 +166,7 @@ async function runChain(chain: WrapperFrame[], req: Request, ctx: RouteContext, 
   return dispatch(0);
 }
 
-async function executeRoute(route: CompiledRoute, req: Request, ctx: RouteContext): Promise<globalThis.Response> {
+async function executeRoute(route: CompiledRoute, req: Request, ctx: RouteContext, ipfsGateway: string | undefined): Promise<globalThis.Response> {
   return runChain(route.chain, req, ctx, async () => {
     const node = route.descriptor;
     const hasResponseChild = node.children.length === 1 && isDescriptor(node.children[0]) && node.children[0].tag === "response";
@@ -183,6 +183,7 @@ async function executeRoute(route: CompiledRoute, req: Request, ctx: RouteContex
     } else if (node.props.src !== undefined) {
       response = await serveSrcProp(req, ctx, node.props.src as never, {
         download: node.props.download as boolean | string | undefined,
+        ipfsGateway,
       });
     } else {
       response = await resolveStaticChildren(node.children, req);
@@ -214,10 +215,28 @@ async function executeNotFound(scope: CompiledScope | undefined, req: Request): 
  * (same nearest-ancestor pattern as ErrorBoundary). The deepest matching
  * scope's own chain still applies even when none declare a NotFound at all
  * -- its middleware should still wrap its own 404 handling, generic or not.
+ *
+ * Hostname-qualified the same way routes are: a scope with a `<Host>`
+ * ancestor only matches a request for that hostname (checked via the same
+ * precompiled hostname-only URLPattern every hostname-qualified route's own
+ * pattern uses one component of, see layout.ts's `scopeFor`); a scope with
+ * no `<Host>` ancestor matches any hostname, same as before `<Host>`
+ * existed. When both a hostname-specific and a host-agnostic scope match at
+ * the same prefix depth, the hostname-specific one wins -- two sibling
+ * `<Host>`s at the same path scope no longer silently overwrite each
+ * other's `NotFound` (the real bug this fixes; each now gets its own scope,
+ * see layout.ts's `scopeFor` keying on `(prefix, hostname)`).
  */
-function nearestScope(scopes: CompiledScope[], pathname: string): CompiledScope | undefined {
-  const candidates = scopes.filter((s) => s.prefix === "" || pathname === s.prefix || pathname.startsWith(`${s.prefix}/`));
-  candidates.sort((a, b) => b.prefix.length - a.prefix.length);
+function nearestScope(scopes: CompiledScope[], url: URL): CompiledScope | undefined {
+  const candidates = scopes.filter(
+    (s) =>
+      (s.prefix === "" || url.pathname === s.prefix || url.pathname.startsWith(`${s.prefix}/`)) &&
+      (s.hostnamePattern === undefined || s.hostnamePattern.test({ hostname: url.hostname })),
+  );
+  candidates.sort((a, b) => {
+    if (a.prefix.length !== b.prefix.length) return b.prefix.length - a.prefix.length;
+    return (b.hostname !== undefined ? 1 : 0) - (a.hostname !== undefined ? 1 : 0);
+  });
   return candidates.find((s) => s.notFoundHandler || s.notFoundStatic) ?? candidates[0];
 }
 
@@ -235,7 +254,7 @@ export async function compile(tree: unknown, options: CompileOptions = {}): Prom
       const match = route.pattern.exec(req.url);
       if (!match) continue;
       const params = (match as unknown as { pathname: { groups: Record<string, string | undefined> } }).pathname.groups;
-      return executeRoute(route, req, { params });
+      return executeRoute(route, req, { params }, options.ipfsGateway);
     }
 
     for (const redirect of laidOut.redirects) {
@@ -246,7 +265,7 @@ export async function compile(tree: unknown, options: CompileOptions = {}): Prom
       );
     }
 
-    return executeNotFound(nearestScope(laidOut.scopes, url.pathname), req);
+    return executeNotFound(nearestScope(laidOut.scopes, url), req);
   }
 
   return { fetch: dispatch, warnings: [...laidOut.warnings, ...drainWarnings()] };

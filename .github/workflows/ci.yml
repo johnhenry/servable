@@ -27,14 +27,32 @@ jobs:
         with:
           repository: johnhenry/packfile
           path: packfile
+      # fileable isn't published with its current API yet (encode=/decode=,
+      # <IPFS>, <MarkdownHTML>, ipfs://, ...) -- the mount-fileable tests use
+      # it via a devDependency on file:../fileable, which needs a sibling
+      # checkout to resolve. Drop this (and the build step below) once
+      # fileable is published for real, same as the packfile workaround
+      # above.
+      - uses: actions/checkout@v4
+        with:
+          repository: johnhenry/fileable
+          path: fileable
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      # --install-links: without it, npm's file:../packfile devDependency
-      # doesn't install *packfile's own* dependencies (cbor) at all --
-      # confirmed by reproducing it in a clean install, not just reasoning
-      # about it. This flag makes npm treat a file: dependency as a real
-      # packed install instead of a shallow symlink, which resolves its
+      # fileable's dist/ is gitignored, never committed -- the sibling
+      # checkout only has source, so it has to be built before servable can
+      # import it (its package.json main/types point at dist/).
+      - run: npm ci --install-links
+        working-directory: fileable
+      - run: npm run build
+        working-directory: fileable
+      # --install-links: without it, npm's file:../packfile and
+      # file:../fileable devDependencies don't install *their own*
+      # dependencies (cbor, wbn, glob, ...) at all -- confirmed by
+      # reproducing it in a clean install, not just reasoning about it.
+      # This flag makes npm treat a file: dependency as a real packed
+      # install instead of a shallow symlink, which resolves its
       # transitive deps normally.
       - run: npm ci --install-links
         working-directory: servable

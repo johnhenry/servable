@@ -11,6 +11,7 @@ export const FRAGMENT: unique symbol = Symbol.for("servable.fragment");
 export type StructuralTag =
   | "router"
   | "group"
+  | "host"
   | "route"
   | "use"
   | "errorboundary"
@@ -54,6 +55,24 @@ export interface FileableTreeLike {
   tag: unknown;
   props: Record<string, unknown>;
   children: unknown[];
+}
+
+/**
+ * A hostname-axis scope -- matched against the incoming request's own
+ * Host header (via `new URL(req.url).hostname`, already how the Node
+ * adapter builds a Request's URL). Compiles into the same `URLPattern`
+ * `hostname` component every nested `Route`/`Redirect`'s own compiled
+ * pattern carries (see layout.ts's `WalkCtx.hostname`) -- a real Layout-
+ * stage scope, applied AFTER every other pipeline stage has finished
+ * expanding the tree (mounted fileable trees, glob-based file routing,
+ * promise-valued `path`s, ...), unlike a pre-Build tree rewrite, which can
+ * only see nodes that already exist at rewrite time. `name` (an exact
+ * hostname) and `pattern` (URLPattern hostname-pattern syntax, e.g.
+ * `"*.example.com"`) are mutually exclusive -- exactly one is required.
+ */
+export interface HostProps extends BaseProps {
+  name?: string;
+  pattern?: string;
 }
 
 export interface GroupProps extends BaseProps {
@@ -258,6 +277,16 @@ export class ServableError extends Error {
 export interface CompileOptions {
   /** Base directory used to resolve relative `handler`/`src` module paths. Default: cwd. */
   cwd?: string;
+  /**
+   * EXAMPLE: base URL an `ipfs://<cid>/<path>` `Route`/`serveFile()` `src`
+   * resolves against -- `ipfs://<cid>/<path>` becomes
+   * `${ipfsGateway}${cid}/${path}`. Default: `"https://ipfs.io/ipfs/"`.
+   * Mirrors `@johnhenry/fileable`'s own `RenderOptions.ipfsGateway` --
+   * same idea, same default, independently implemented at this layer
+   * since `Route src` is resolved fresh per-request (serve-file.ts), not
+   * once at compile time the way fileable's own `src` is.
+   */
+  ipfsGateway?: string;
 }
 
 /** The compiled artifact: one dispatcher function, plus warnings collected along the way. */

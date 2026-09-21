@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { serveFile } from "../src/serve-file.js";
+import { compile } from "../src/compile.js";
+import { Route, Router } from "../src/components.js";
 
 const fixture = join(process.cwd(), "test/fixtures/range-test.txt");
 
@@ -66,4 +68,78 @@ test("a Blob source works directly, no filesystem involved", async () => {
 
 test("a nonexistent local file rejects with a clear error", async () => {
   await assert.rejects(() => serveFile(new Request("http://x/file"), "/no/such/file.txt"));
+});
+
+test('src="ipfs://<cid>/<path>" (EXAMPLE) fetches via the configured gateway, real Content-Type/ETag and all', async () => {
+  const { createServer } = await import("node:http");
+  const CID = "bafyservabletest";
+  const server = createServer((req, res) => {
+    if (req.url === `/ipfs/${CID}/index.html`) {
+      res.writeHead(200, { "content-type": "text/html", etag: '"real-etag"' });
+      res.end("<h1>from ipfs</h1>");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolvePromise) => server.listen(0, resolvePromise));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const res = await serveFile(new Request("http://x/file"), `ipfs://${CID}/index.html`, {
+      ipfsGateway: `http://127.0.0.1:${port}/ipfs/`,
+    });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type")!, /text\/html/);
+    assert.equal(res.headers.get("etag"), '"real-etag"');
+    assert.equal(await res.text(), "<h1>from ipfs</h1>");
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  }
+});
+
+test('src="ipfs://..." (EXAMPLE) throws a clear ServableError on a gateway error', async () => {
+  const { createServer } = await import("node:http");
+  const server = createServer((_req, res) => {
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolvePromise) => server.listen(0, resolvePromise));
+  const port = (server.address() as { port: number }).port;
+  try {
+    await assert.rejects(() =>
+      serveFile(new Request("http://x/file"), "ipfs://nope/missing.html", {
+        ipfsGateway: `http://127.0.0.1:${port}/ipfs/`,
+      }),
+    );
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  }
+});
+
+test('compile(tree, {ipfsGateway}) threads the gateway through to a real <Route src="ipfs://...">', async () => {
+  const { createServer } = await import("node:http");
+  const CID = "bafycompiletest";
+  const server = createServer((req, res) => {
+    if (req.url === `/ipfs/${CID}/logo.png`) {
+      res.writeHead(200, { "content-type": "image/png" });
+      res.end("fake-png-bytes");
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolvePromise) => server.listen(0, resolvePromise));
+  const port = (server.address() as { port: number }).port;
+  try {
+    const tree = Router({
+      children: Route({ path: "/logo.png", method: "GET", src: `ipfs://${CID}/logo.png` }),
+    });
+    const compiled = await compile(tree, { ipfsGateway: `http://127.0.0.1:${port}/ipfs/` });
+    const res = await compiled.fetch(new Request("http://x/logo.png"));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type")!, /image\/png/);
+    assert.equal(await res.text(), "fake-png-bytes");
+  } finally {
+    await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+  }
 });

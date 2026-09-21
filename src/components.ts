@@ -1,19 +1,21 @@
 /**
- * The only supported way to reach the eight structural primitives.
- * `<Router>`/`<Group>`/`<Route>`/`<Use>`/`<ErrorBoundary>`/`<NotFound>`/
- * `<Redirect>`/`<Response>` (or called directly as functions, no JSX needed)
- * are ordinary functions with an explicit, importable identity -- unlike the
- * lowercase `<router>`/`<group>`/etc. tags, which are reserved and throw if
- * authored directly (see jsx-runtime.ts's RESERVED_TAGS). These build the
- * descriptor directly rather than going through `jsx()`, since `jsx()` is
- * exactly where that lowercase-tag rejection lives -- these three are the
- * sanctioned bypass, not a loophole (mirrors fileable's components.ts).
+ * The only supported way to reach the nine structural primitives.
+ * `<Router>`/`<Group>`/`<Host>`/`<Route>`/`<Use>`/`<ErrorBoundary>`/
+ * `<NotFound>`/`<Redirect>`/`<Response>` (or called directly as functions,
+ * no JSX needed) are ordinary functions with an explicit, importable
+ * identity -- unlike the lowercase `<router>`/`<group>`/etc. tags, which
+ * are reserved and throw if authored directly (see jsx-runtime.ts's
+ * RESERVED_TAGS). These build the descriptor directly rather than going
+ * through `jsx()`, since `jsx()` is exactly where that lowercase-tag
+ * rejection lives -- these three are the sanctioned bypass, not a loophole
+ * (mirrors fileable's components.ts).
  */
 import type {
   Descriptor,
   DescriptorChild,
   ErrorBoundaryProps,
   GroupProps,
+  HostProps,
   NotFoundProps,
   RedirectProps,
   ResponseTagProps,
@@ -39,6 +41,10 @@ export function Router(props: RouterProps = {}): Descriptor {
 
 export function Group(props: GroupProps): Descriptor {
   return structural("group", props as Record<string, unknown>);
+}
+
+export function Host(props: HostProps): Descriptor {
+  return structural("host", props as Record<string, unknown>);
 }
 
 export function Route(props: RouteProps): Descriptor {

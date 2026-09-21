@@ -92,7 +92,7 @@
   },
   "devDependencies": {
     "@johnhenry/leserve": "^0.0.0",
-    "@johnhenry/fileable": "^0.0.1",
+    "@johnhenry/fileable": "file:../fileable",
     "@types/node": "^26.6.1",
     "typescript": "^7.0.2",
     "@johnhenry/packfile": "file:../packfile"

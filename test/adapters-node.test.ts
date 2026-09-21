@@ -134,7 +134,7 @@ test("mounting a fileable tree serves it over real HTTP too", async () => {
   const site = Dir({ name: "dist", children: [File({ name: "index.html", children: ["mounted"] })] });
   const tree = Router({ children: Group({ prefix: "/static", from: site }) });
   await withServer(tree, async (base) => {
-    const res = await fetch(`${base}/static/index.html`);
+    const res = await fetch(`${base}/static/dist/index.html`);
     assert.equal(await res.text(), "mounted");
   });
 });

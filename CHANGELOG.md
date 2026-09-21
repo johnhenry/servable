@@ -3,6 +3,49 @@
 ## Unreleased
 
 ### Added
+- **EXAMPLE: `src="ipfs://<cid>/<path>"` on `Route`/`serveFile()`.** A
+  second URI scheme `serve-file.ts`'s `resolveAsset()` recognizes, right
+  alongside `https://` -- the same "one more branch" move
+  `@johnhenry/fileable`'s own `loadSrc()` uses for the identical scheme,
+  independently implemented here since `Route src` resolves fresh
+  per-request (this package has no caching layer at all, by design) rather
+  than once at compile time. New `CompileOptions.ipfsGateway`/
+  `ServeFileOptions.ipfsGateway` (default `"https://ipfs.io/ipfs/"`),
+  threaded from `compile(tree, options)` through `executeRoute()` down to
+  `serveSrcProp()`/`serveFile()`/`resolveAsset()` -- the one part of this
+  addition that isn't just a new `if` branch, since `Route src` resolution
+  happens inside the per-request `dispatch()` closure, not during
+  Build/Resolve/Layout. Verified for real, not just unit-level:
+  `test/serve-file.test.ts` fetches through a real local HTTP server
+  standing in for a gateway (Content-Type/ETag preserved from the real
+  response, same as the existing `https://` handling), and a dedicated
+  test proves the `ipfsGateway` option actually reaches a real
+  `compile()`d `<Route src="ipfs://...">` end to end, not just
+  `serveFile()` in isolation.
+- **`Host name="..."` / `Host pattern="*.example.com"`** -- a real
+  hostname-axis scope, handled in Layout (`layout.ts`) alongside `Group`'s
+  own pathname-prefix scope: `WalkCtx.hostname` is threaded through the
+  walk the same way `basePath` already is, baked into every nested
+  `Route`/`Redirect`'s compiled `URLPattern`, and used for scope keying
+  (`NotFound`/`ErrorBoundary`) and `linkTo()`. Previously this axis existed
+  only in `@johnhenry/hostable`, implemented as a one-pass pre-Build tree
+  rewrite -- which meant any route created by a LATER pipeline stage (a
+  mounted fileable tree, `Group from="glob"` file-based routing, a
+  promise-valued `path`, a literal `<Router>` nested inside a `<Host>`)
+  was invisible to that rewrite and never got hostname-qualified at all,
+  so it leaked across every `<Host>` in the gateway -- confirmed
+  empirically: a `<Host>` that should only reverse-proxy elsewhere was
+  also serving a sibling `<Host>`'s mounted static files. Moving `Host`
+  into servable's own Layout stage (the stage that runs *after* every
+  other stage has finished expanding the tree) fixes this at the root,
+  for every expansion point at once, rather than requiring hostable to
+  special-case each one as it's found. `@johnhenry/hostable` now
+  re-exports this `Host` directly (same as `Group`/`Route`/etc.) instead
+  of implementing its own; see hostable's own CHANGELOG for that side of
+  the fix. See README's "The primitives" and `test/host.test.ts` for the
+  full behavior and regression coverage (19 tests, including every one of
+  the leak points enumerated above, each proven fixed against a real
+  compiled app and real `fetch()` calls, not just reasoned about).
 - **`Descriptor.tag`'s type widened from `StructuralTag | typeof FRAGMENT |
   string` to `StructuralTag | symbol | string`.** Enables writing a
   fileable tree as *literal* `<Dir>`/`<File>` JSX nested directly inside
@@ -69,6 +112,27 @@
   path, which can't resolve for anyone outside this machine. `leserve`
   was adopted into the `@johnhenry` scope and published for real; the
   peer/dev dependencies here now point at the real `@johnhenry/leserve`.
+- **`mount-fileable.ts` still spoke fileable's old vocabulary** --
+  `target: "loose" | "archive"` and an `as="archive"` skip-check, both
+  stale after fileable's own container-target values were renamed twice
+  (`"archive"`/`"packfile"` -> `"zip"`/`"wbn"`, then the `Dir` prop itself
+  from `as` to `encode`). Not a live bug against the *published*
+  `@johnhenry/fileable@0.0.1` this package currently depends on (which
+  predates all of those renames), but a real, silent one waiting to
+  trigger the moment fileable ships them: the target check would simply
+  never match `"zip"`/`"wbn"`, so every file inside a `<Dir encode="zip">`
+  or `<Dir encode="wbn">` subtree would fall through and get mounted as an
+  individual loose route instead of being skipped-with-a-warning the way
+  an unmountable container is supposed to be. Updated the check to cover
+  both `"zip"` and `"wbn"` (previously only one container format existed
+  at all), the local `FileableArtifact` type's stale `archivePath` field
+  to fileable's real `containerPath`, and every doc comment. Verified
+  against fileable's actual current API, not just read for consistency:
+  the dev dependency here was pointed at `file:../fileable` (matching this
+  family's established pattern for actively-co-developed siblings) to run
+  two new real tests (`test/mount-fileable.test.ts`) proving a `"zip"`
+  and a `"wbn"` subtree are each correctly skipped, with the expected
+  warning, rather than silently mismounted.
 
 ### Changed
 - `adapters/node`'s `serve()` now delegates to

@@ -142,15 +142,20 @@ export async function resolve(roots: Descriptor[], options: CompileOptions = {})
     }
 
     // A fileable descriptor (<Dir>/<File>/<Rm>, or generic markup nested
-    // under one) placed directly as a child of <Router>/<Group> -- not just
-    // behind `from=` -- is mounted the same way `from={fileableTree}` is.
-    // Scoped to router/group (the containment/scope primitives) rather than
-    // every node, since e.g. a Route's children are a *static value* slot,
-    // a different semantic than "nested primitives" -- mixing the two would
-    // make an accidental fileable descriptor in a Route's content silently
-    // ambiguous instead of clearly out of scope.
+    // under one) placed directly as a child of <Router>/<Group>/<Host> --
+    // not just behind `from=` -- is mounted the same way `from={fileableTree}`
+    // is. Scoped to router/group/host (the containment/scope primitives)
+    // rather than every node, since e.g. a Route's children are a *static
+    // value* slot, a different semantic than "nested primitives" -- mixing
+    // the two would make an accidental fileable descriptor in a Route's
+    // content silently ambiguous instead of clearly out of scope. <Host> is
+    // included so a fileable tree mounted directly under a Host (no Group
+    // wrapper) is hostname-qualified by Layout exactly like a literal
+    // <Route> would be -- the whole point of Host now being a real Layout-
+    // stage scope, not a pre-Build rewrite that could only qualify nodes it
+    // could already see (see layout.ts's own module doc comment).
     const childPath = `${path} > ${String(node.tag)}`;
-    if (node.tag === "router" || node.tag === "group") {
+    if (node.tag === "router" || node.tag === "group" || node.tag === "host") {
       const resolvedChildren: DescriptorChild[] = [];
       for (const child of node.children) {
         if (isDescriptor(child) && isFileableDescriptor(child)) {
@@ -163,6 +168,25 @@ export async function resolve(roots: Descriptor[], options: CompileOptions = {})
       node.children = resolvedChildren;
     } else {
       for (const child of node.children) {
+        // A fileable descriptor outside router/group scope used to fail
+        // silently and confusingly: compile.ts's resolveStaticChildren has
+        // no idea what a <File>/<Dir> means, so it fell into the generic
+        // "JSX markup -> HTML" path and serialized the descriptor's own
+        // {tag,props,children} shape as literal tag text (e.g. a Route's
+        // response body became the literal string
+        // `<file name="x.html">content</file>`) -- wrong output, no error,
+        // discovered only by actually inspecting a response body. Caught
+        // here instead, at compile time, with an actionable message.
+        if (isDescriptor(child) && isFileableDescriptor(child)) {
+          throw new ServableError(
+            `a fileable <${String(child.tag)}> descriptor can't be used here, under <${String(node.tag)}> -- ` +
+              "fileable descriptors are only mounted as static routes when they're a direct child of " +
+              "<Router>/<Group>/<Host> (or a Group's own from= prop). For a single file's content at one Route, " +
+              "use that Route's own body handling (a string/Response/BodyInit/object child) or its src= prop " +
+              "instead of fileable's <File>.",
+            childPath,
+          );
+        }
         await resolveChild(child, childPath);
       }
     }

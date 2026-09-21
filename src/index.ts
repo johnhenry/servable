@@ -1,6 +1,6 @@
 export { compile } from "./compile.js";
 export { linkTo, warn, markdownToHtml, setCookie, sse, streamBody, upgradeWebSocket, serveFile } from "./api.js";
-export { Router, Group, Route, Use, ErrorBoundary, NotFound, Redirect, Response } from "./components.js";
+export { Router, Group, Host, Route, Use, ErrorBoundary, NotFound, Redirect, Response } from "./components.js";
 
 // Individual stages are exported too so each can be tested independently,
 // same PRD-derived framing as fileable's index.ts.
@@ -25,6 +25,7 @@ export type {
   Handler,
   HeadersInput,
   HeadersInputOrFn,
+  HostProps,
   Middleware,
   NextFn,
   NotFoundProps,

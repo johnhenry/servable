@@ -24,6 +24,7 @@ type ComponentFn = (props: Record<string, unknown>) => unknown;
 const RESERVED_TAGS: Record<string, string> = {
   router: "Router",
   group: "Group",
+  host: "Host",
   route: "Route",
   use: "Use",
   errorboundary: "ErrorBoundary",

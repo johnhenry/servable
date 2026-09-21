@@ -51,6 +51,10 @@ export interface CompiledRedirect {
 
 export interface CompiledScope {
   prefix: string;
+  /** The <Host>'s own name/pattern this scope is nested under, if any -- undefined means "no Host ancestor", not "matches every Host" (see compile.ts's nearestScope, which still lets a host-agnostic scope match any hostname when no more specific one does). */
+  hostname?: string;
+  /** Precompiled once here (not per-request in compile.ts) -- a hostname-only URLPattern, present iff `hostname` is. */
+  hostnamePattern?: InstanceType<typeof URLPatternImpl>;
   chain: WrapperFrame[];
   notFoundHandler?: Descriptor["props"]["handler"];
   notFoundStatic?: DescriptorChild[];
@@ -65,6 +69,8 @@ export interface LayoutResult {
 
 interface WalkCtx {
   basePath: string;
+  /** Set once inside a <Host> -- undefined outside any Host, meaning "match any hostname" (unchanged pre-Host behavior). */
+  hostname?: string;
   chain: WrapperFrame[];
   headersLayers: HeadersInputOrFn[];
 }
@@ -77,15 +83,25 @@ export function layout(roots: Descriptor[]): LayoutResult {
   const dedup = new Map<string, string>();
   const linkTargets = new Map<Descriptor, string>();
 
-  function dedupKey(method: string, finalPath: string | InstanceType<typeof URLPatternImpl>): string {
-    if (typeof finalPath === "string") return `${method}::${finalPath}`;
+  function dedupKey(method: string, finalPath: string | InstanceType<typeof URLPatternImpl>, hostname: string | undefined): string {
+    // hostname included even for the string-path case -- finalPath is the
+    // raw joined path BEFORE compilePath() bakes hostname into the actual
+    // pattern, so two <Host>s reusing the same pathname must not collide
+    // here (the real bug this dedup key fix closes: two sibling Hosts
+    // could never both have e.g. GET /health before this).
+    if (typeof finalPath === "string") return `${method}::${hostname ?? ""}::${finalPath}`;
     return `${method}::urlpattern:${finalPath.protocol}|${finalPath.hostname}|${finalPath.pathname}|${finalPath.search}`;
   }
 
-  function scopeFor(basePath: string): CompiledScope {
-    let scope = scopes.find((s) => s.prefix === basePath);
+  function scopeFor(basePath: string, hostname: string | undefined): CompiledScope {
+    let scope = scopes.find((s) => s.prefix === basePath && s.hostname === hostname);
     if (!scope) {
-      scope = { prefix: basePath, chain: [] };
+      scope = {
+        prefix: basePath,
+        hostname,
+        hostnamePattern: hostname === undefined ? undefined : new URLPatternImpl({ hostname }),
+        chain: [],
+      };
       scopes.push(scope);
     }
     return scope;
@@ -94,7 +110,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
   function walk(node: Descriptor, ctx: WalkCtx, path: string): void {
     switch (node.tag) {
       case "router": {
-        scopeFor(ctx.basePath).chain = ctx.chain;
+        scopeFor(ctx.basePath, ctx.hostname).chain = ctx.chain;
         for (const child of node.children) walkChild(child, ctx, `${path} > router`);
         return;
       }
@@ -103,9 +119,24 @@ export function layout(roots: Descriptor[]): LayoutResult {
         const nextBasePath = posixJoin(ctx.basePath, prefix);
         const nextHeadersLayers =
           node.props.headers !== undefined ? [...ctx.headersLayers, node.props.headers as HeadersInputOrFn] : ctx.headersLayers;
-        const nextCtx: WalkCtx = { basePath: nextBasePath, chain: ctx.chain, headersLayers: nextHeadersLayers };
-        scopeFor(nextBasePath).chain = ctx.chain;
+        const nextCtx: WalkCtx = { basePath: nextBasePath, hostname: ctx.hostname, chain: ctx.chain, headersLayers: nextHeadersLayers };
+        scopeFor(nextBasePath, ctx.hostname).chain = ctx.chain;
         for (const child of node.children) walkChild(child, nextCtx, `${path} > group[${prefix}]`);
+        return;
+      }
+      case "host": {
+        if (ctx.hostname !== undefined) {
+          throw new ServableError("<Host> cannot be nested inside another <Host>", path);
+        }
+        const name = node.props.name as string | undefined;
+        const pattern = node.props.pattern as string | undefined;
+        const hostname = pattern ?? name;
+        if (!hostname) {
+          throw new ServableError("<Host> requires a `name` or `pattern` prop", path);
+        }
+        const nextCtx: WalkCtx = { ...ctx, hostname };
+        scopeFor(ctx.basePath, hostname).chain = ctx.chain;
+        for (const child of node.children) walkChild(child, nextCtx, `${path} > host[${hostname}]`);
         return;
       }
       case "use": {
@@ -127,7 +158,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
         return;
       }
       case "notfound": {
-        const scope = scopeFor(ctx.basePath);
+        const scope = scopeFor(ctx.basePath, ctx.hostname);
         scope.chain = ctx.chain;
         if (typeof node.props.handler === "function") {
           scope.notFoundHandler = node.props.handler;
@@ -148,7 +179,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
         // isn't meant to be joined with a local path prefix.
         const resolvedTo = /^https?:\/\//.test(to) ? to : posixJoin(ctx.basePath, to);
         redirects.push({
-          pattern: compilePath(posixJoin(ctx.basePath, from)),
+          pattern: compilePath(posixJoin(ctx.basePath, from), ctx.hostname),
           to: resolvedTo,
           status: (node.props.status as number | undefined) ?? 301,
           chain: ctx.chain,
@@ -196,7 +227,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
     const finalPath =
       typeof rawPath === "string" ? (rawPath === "/" ? ctx.basePath || "/" : posixJoin(ctx.basePath, rawPath)) : rawPath;
     const patternSource = isBareGroupRoot ? `${ctx.basePath}{/}?` : finalPath;
-    const key = dedupKey(method, finalPath);
+    const key = dedupKey(method, finalPath, ctx.hostname);
     if (dedup.has(key)) {
       throw new ServableError(
         `duplicate route: ${method} ${typeof finalPath === "string" ? finalPath : "[URLPattern]"} -- two <Route>s both resolve here`,
@@ -210,7 +241,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
 
     routes.push({
       method,
-      pattern: compilePath(patternSource),
+      pattern: compilePath(patternSource, ctx.hostname),
       descriptor: node,
       chain: ctx.chain,
       headersLayers,

@@ -12,11 +12,22 @@
  * No caching layer: every request re-reads the source. Simple, correct,
  * and consistent with excluding the Cache API -- a deliberate limitation,
  * not an oversight; compose your own caching `Use` around it if needed.
+ * (For `ipfs://` specifically, every request re-fetching through the
+ * gateway is a real, known cost this package doesn't try to hide --
+ * compose a caching `Use` the same way you would for any other `src`.)
+ *
+ * `ipfs://<cid>/<path>` (EXAMPLE) is a second URI scheme `resolveAsset()`
+ * recognizes, right alongside `https://` -- the same "one more branch"
+ * move `@johnhenry/fileable`'s own `loadSrc()` uses for the exact same
+ * scheme, independently implemented here since `Route src` resolves fresh
+ * per-request rather than once at compile time.
  */
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { ServableError } from "./types.js";
 import type { RouteContext, SrcValue } from "./types.js";
+
+const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -58,7 +69,7 @@ interface ResolvedAsset {
   filename: string;
 }
 
-async function resolveAsset(source: SrcValue): Promise<ResolvedAsset> {
+async function resolveAsset(source: SrcValue, ipfsGateway: string = DEFAULT_IPFS_GATEWAY): Promise<ResolvedAsset> {
   if (typeof source !== "string") {
     // An in-memory Blob (or File, which extends Blob) -- no filesystem
     // identity, so no ETag/Last-Modified; a File's own .name is used for
@@ -68,6 +79,22 @@ async function resolveAsset(source: SrcValue): Promise<ResolvedAsset> {
       blob: source,
       contentType: source.type || inferContentType(name),
       filename: name,
+    };
+  }
+  if (/^ipfs:\/\//.test(source)) {
+    const rest = source.slice("ipfs://".length);
+    const url = ipfsGateway.endsWith("/") ? `${ipfsGateway}${rest}` : `${ipfsGateway}/${rest}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new ServableError(`ipfs fetch failed: ${source} via ${url} (${res.status})`, source);
+    }
+    const blob = await res.blob();
+    const filename = basename(rest) || "download";
+    return {
+      blob,
+      contentType: res.headers.get("content-type") ?? inferContentType(filename),
+      etag: res.headers.get("etag") ?? undefined,
+      filename,
     };
   }
   if (/^https?:\/\//.test(source)) {
@@ -139,6 +166,8 @@ function parseRange(rangeHeader: string, totalSize: number): RangeSpec | "unsati
 
 export interface ServeFileOptions {
   download?: boolean | string;
+  /** See `CompileOptions.ipfsGateway`'s own doc comment. Default: `"https://ipfs.io/ipfs/"`. */
+  ipfsGateway?: string;
 }
 
 export async function serveFile(
@@ -146,7 +175,7 @@ export async function serveFile(
   source: SrcValue,
   options: ServeFileOptions = {},
 ): Promise<globalThis.Response> {
-  const asset = await resolveAsset(source);
+  const asset = await resolveAsset(source, options.ipfsGateway);
   const totalSize = asset.blob.size;
 
   const headers = new Headers();
