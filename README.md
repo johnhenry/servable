@@ -1,5 +1,9 @@
 # servable
 
+[![npm version](https://img.shields.io/npm/v/%40johnhenry%2Fservable.svg)](https://www.npmjs.com/package/@johnhenry/servable)
+[![CI](https://github.com/johnhenry/servable/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/servable/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/%40johnhenry%2Fservable.svg)](LICENSE)
+
 Declaratively describe an HTTP server using JSX -- a small closed set of
 primitives, driven by servable's own JSX runtime (no React/Solid/Astro
 dependency), compiled into one Fetch-API `(Request) => Response` dispatcher.
@@ -168,6 +172,62 @@ the Fetch `Cache` API (inconsistent support across Node/Deno/Bun/Workers,
 unlike `Request`/`Response`/`Headers`/`URLPattern`); `<Video>`/`<Audio>`/
 `<Image>`/`<Pdf>`/`<Download>` tags (all five are presets of the same
 `src`/`download`/Range mechanism, not a different capability).
+
+## Adding a new primitive
+
+The "Rejected additions" list above is really one test applied nine
+times: **does this need real compile-time wiring that a `Use` middleware
+or an existing prop fundamentally cannot provide?** `Use` already runs
+arbitrary code around a subtree at request time -- that covers anything
+expressible as "inspect/modify the request, call `next()`, inspect/modify
+the response" (`<Validate>`, a caching layer, auth). A prop already
+covers anything that's just metadata on a single existing node
+(`<Header>`/`<Trailer>` -> `headers`/`trailers`; `<Video>`/`<Pdf>` -> `src`/
+`download`). Neither covers a genuinely new **scoping axis** baked into
+how requests get matched in the first place, before any handler or
+middleware runs at all -- that's what actually justifies a new primitive,
+and it's exactly why `Host` (hostname-axis scoping, alongside `Group`'s
+existing pathname-axis scoping) is real and `<Validate>` isn't.
+
+`Host` is also the best real worked example in this package's own
+history (see CHANGELOG's "Unreleased" entry) -- it follows the same
+four-touchpoint shape `@johnhenry/fileable`'s own README section "Adding
+a new tag" documents for its domain:
+
+1. A `Props` interface + a `StructuralTag` union entry (`src/types.ts`) --
+   `HostProps { name?: string; pattern?: string }`, `"host"` added to the
+   `StructuralTag` union.
+2. A one-line `structural("host", props)` factory (`src/components.ts`) --
+   copy-paste of `Group`'s own.
+3. A `RESERVED_TAGS` entry (`src/jsx-runtime.ts`) so the bare lowercase
+   `<host>` throws a clear "use `<Host>`" error instead of silently
+   becoming an unrecognized node, same as every other primitive.
+4. The part that isn't boilerplate: real Layout-stage logic in
+   `layout.ts`. `WalkCtx.hostname` is threaded through the tree walk the
+   same way `basePath` already is; `dedupKey()` was widened to include
+   `hostname` so two sibling `<Host>`s reusing the same path don't
+   collide; `compilePath()` bakes `hostname` into the actual compiled
+   `URLPattern` every nested `Route`/`Redirect` gets. `compile.ts`'s
+   `nearestScope()` picks a hostname-specific scope over a host-agnostic
+   one when both match, so a `<Host>`-scoped `NotFound` doesn't lose to
+   an unscoped sibling's.
+
+Why Layout and not Build/Resolve: `Host` has to apply **after** every
+other pipeline stage has finished expanding the tree (a mounted fileable
+tree, `Group from="glob"` file-based routing, a promise-valued `path`, a
+literal `<Router>` nested inside a `<Host>`) -- Layout is the one stage
+that runs once everything else has already produced its routes. This is
+also a real bug fix, not just a design preference: `Host` used to live
+one layer up, in `@johnhenry/hostable`, implemented as a one-pass
+pre-Build tree rewrite -- which meant any route created by a *later*
+stage was invisible to that rewrite and leaked across every `<Host>` in
+the gateway (confirmed empirically: a `<Host>` that should only
+reverse-proxy elsewhere also served a sibling `<Host>`'s mounted static
+files). Moving the primitive itself down into servable's own Layout
+stage fixed it at the root, for every expansion point at once, instead
+of requiring `hostable` to special-case each one as it was found -- see
+`test/host.test.ts` (19 tests, including every one of the leak points)
+and hostable's own CHANGELOG for the consuming side of the fix.
 
 ## Standard Web API usage
 
@@ -449,7 +509,7 @@ See [`examples/`](./examples): `01-hello-world`, `02-crud-api` (static +
 dynamic `Route` mix, `<Response>`), `03-middleware-auth` (`Use`/
 `ErrorBoundary` composition), `04-file-based-routing` (`Group from="glob"`),
 `05-streaming` (`sse()`/`streamBody()`), `06-media-serving` (`src`/
-`download`/Range), `07-mount-fileable`.
+`download`/Range), `07-mount-fileable`, `08-mount-packfile`.
 
 ## License
 
