@@ -4,6 +4,8 @@
 [![CI](https://github.com/johnhenry/servable/actions/workflows/ci.yml/badge.svg)](https://github.com/johnhenry/servable/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/%40johnhenry%2Fservable.svg)](LICENSE)
 
+Full documentation: [opensource.johnhenry.me/servable](https://opensource.johnhenry.me/servable/)
+
 Declaratively describe an HTTP server using JSX -- a small closed set of
 primitives, driven by servable's own JSX runtime (no React/Solid/Astro
 dependency), compiled into one Fetch-API `(Request) => Response` dispatcher.
@@ -15,6 +17,26 @@ deliberately separate packages, not a shared dependency; `fileable` stays a
 filesystem tool, servable stays a routing tool. servable can optionally
 *mount* a fileable tree as static routes (see below) -- that's the one
 place they meet.
+
+## Contents
+
+- [The governing rule](#the-governing-rule)
+- [Installation](#installation)
+- [Quick example](#quick-example)
+- [The primitives](#the-primitives)
+- [Adding a new primitive](#adding-a-new-primitive)
+- [Standard Web API usage](#standard-web-api-usage)
+- [Headers and trailers](#headers-and-trailers)
+- [Streaming](#streaming)
+- [Mounting a fileable tree](#mounting-a-fileable-tree)
+  - [Mounting without `from=`](#mounting-without-from)
+  - [Mounting a single bare `<File>` (no `<Dir>` needed)](#mounting-a-single-bare-file-no-dir-needed)
+  - [Fileable descriptors are only recognized under `<Router>`/`<Group>`](#fileable-descriptors-are-only-recognized-under-routergroup)
+- [Adapters](#adapters)
+- [Non-goals](#non-goals)
+- [Examples](#examples)
+- [Family](#family)
+- [License](#license)
 
 ## The governing rule
 
@@ -228,6 +250,14 @@ stage fixed it at the root, for every expansion point at once, instead
 of requiring `hostable` to special-case each one as it was found -- see
 `test/host.test.ts` (19 tests, including every one of the leak points)
 and hostable's own CHANGELOG for the consuming side of the fix.
+
+Contrast with `@johnhenry/hostable`'s own "Adding a new primitive" section:
+hostable only has one new leaf of its own (`Upstream`), so most of its
+growth isn't a new primitive at all, it's a new forwarding mechanism on
+`Upstream` -- a different, smaller-shaped problem than adding a genuinely
+new tag here. And `@johnhenry/fileable`'s "Adding a new tag" section covers
+the same four-touchpoint shape one layer down, for filesystem primitives
+instead of HTTP ones.
 
 ## Standard Web API usage
 
@@ -505,11 +535,42 @@ const handle = serve(compiled, { port: 3000, onListen: (info) => console.log(inf
 
 ## Examples
 
-See [`examples/`](./examples): `01-hello-world`, `02-crud-api` (static +
-dynamic `Route` mix, `<Response>`), `03-middleware-auth` (`Use`/
-`ErrorBoundary` composition), `04-file-based-routing` (`Group from="glob"`),
-`05-streaming` (`sse()`/`streamBody()`), `06-media-serving` (`src`/
-`download`/Range), `07-mount-fileable`, `08-mount-packfile`.
+See [`examples/`](./examples) (and its own
+[`examples/README.md`](./examples/README.md) index): `01-hello-world`,
+`02-crud-api` (static + dynamic `Route` mix, `<Response>`),
+`03-middleware-auth` (`Use`/`ErrorBoundary` composition),
+`04-file-based-routing` (`Group from="glob"`), `05-streaming`
+(`sse()`/`streamBody()`), `06-media-serving` (`src`/`download`/Range),
+`07-mount-fileable`, `08-mount-packfile`.
+
+## Family
+
+servable is the middle package in the `fileable -> servable -> hostable`
+lineage -- a real, direct dependency runs through it in both directions:
+it optionally consumes fileable's output, and hostable depends on it
+outright to do its own job.
+
+- **[`@johnhenry/fileable`](https://github.com/johnhenry/fileable)** --
+  fileable's `<Dir>`/`<File>` trees mount directly as static routes, either
+  via `Group from={fileableTree}` or as a raw JSX child of `<Router>`/
+  `<Group>` (see "Mounting a fileable tree" above). `@johnhenry/fileable`
+  is an **optional peer dependency**, lazily imported only when a mount
+  actually duck-types as a fileable tree -- routing-only consumers of this
+  package never pay for it.
+- **[`@johnhenry/hostable`](https://github.com/johnhenry/hostable)** --
+  hostable is built directly on top of this package: `Group`/`Host`/
+  `Route`/`Use`/`ErrorBoundary`/`NotFound`/`Redirect`/`Response` are all
+  re-exported from here unchanged, and hostable's own `compile()` delegates
+  to this package's `compile()` for everything below `<Host>`. `Host`
+  itself -- the domain-axis scope hostable is named after -- lives in this
+  package's own Layout stage (moved down from an earlier hostable-only
+  pre-transform; see "Adding a new primitive" above for the fix), so
+  hostable gets it for free rather than re-implementing it.
+- **[`@johnhenry/leserve`](https://github.com/johnhenry/leserve)** -- the
+  Node adapter (`adapters/node`) delegates to leserve's own `serve()`
+  rather than maintaining a second `IncomingMessage`/`ServerResponse` ->
+  `Request`/`Response` bridge. `@johnhenry/leserve` is an **optional peer
+  dependency**, only needed by that one adapter.
 
 ## License
 
