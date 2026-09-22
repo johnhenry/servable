@@ -3,62 +3,25 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  push:
+    # Redundant with the release trigger above -- see fileable's
+    # publish.yml / johnhenry/workflows' README for the full incident
+    # writeup: creating a release very soon after a push/merge to the
+    # same commit can silently drop the release event for a job whose
+    # body is uses: <external-repo>/...@v1. This gives a second,
+    # idempotency-safe chance to fire.
+    tags:
+      - "v*"
   workflow_dispatch: {}
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: servable
-
-      # packfile isn't published yet -- see the identical comment in ci.yml.
-      # Drop this (and --install-links below) once it is.
-      - uses: actions/checkout@v4
-        with:
-          repository: johnhenry/packfile
-          path: packfile
-
-      # fileable isn't published with its current API yet -- see the
-      # identical comment in ci.yml. Drop this (and the build step below)
-      # once it is.
-      - uses: actions/checkout@v4
-        with:
-          repository: johnhenry/fileable
-          path: fileable
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - run: npm ci --install-links
-        working-directory: fileable
-
-      - run: npm run build
-        working-directory: fileable
-
-      - run: npm ci --install-links
-        working-directory: servable
-
-      - run: npm test
-        working-directory: servable
-
-      - name: Publish
-        # Idempotent: `npm view` exits non-zero for a version that isn't on
-        # the registry yet, which is the signal to publish.
-        working-directory: servable
-        run: |
-          PKG_NAME=$(node -p "require('./package.json').name")
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
-            echo "::notice title=Already published::$PKG_NAME@$PKG_VERSION is already on npm; nothing to do."
-            exit 0
-          fi
-          npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      id-token: write # required by the reusable workflow's provenance step --
+        # see johnhenry/workflows' README for why this must be declared here too.
+    uses: johnhenry/workflows/.github/workflows/npm-publish.yml@v1
+    with:
+      node-version: "26"
+      gate-commands: npm test
+    secrets: inherit
