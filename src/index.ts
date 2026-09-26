@@ -5,7 +5,7 @@ export { Router, Group, Host, Route, Use, ErrorBoundary, NotFound, Redirect, Res
 // Individual stages are exported too so each can be tested independently,
 // same PRD-derived framing as fileable's index.ts.
 export { build } from "./build.js";
-export { resolve } from "./resolve.js";
+export { resolve } from "#resolve";
 export { layout } from "./layout.js";
 
 export type {

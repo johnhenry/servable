@@ -10,8 +10,8 @@ import { linkRegistry } from "./link-registry.js";
 import { ServableError } from "./types.js";
 import type { Descriptor } from "./types.js";
 
-export { serveFile } from "./serve-file.js";
-export type { ServeFileOptions } from "./serve-file.js";
+export { serveFile } from "#serve-file";
+export type { ServeFileOptions } from "#serve-file";
 
 /**
  * Two callers, two timings -- see link-registry.ts's own doc comment for

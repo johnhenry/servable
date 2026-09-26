@@ -11,9 +11,9 @@
 import { isDescriptor, ServableError } from "./types.js";
 import type { CompileOptions, CompileResult, Descriptor, DescriptorChild, RouteContext } from "./types.js";
 import { build } from "./build.js";
-import { resolve as resolveTree } from "./resolve.js";
+import { resolve as resolveTree } from "#resolve";
 import { layout, type CompiledRoute, type CompiledScope, type WrapperFrame } from "./layout.js";
-import { serveSrcProp } from "./serve-file.js";
+import { serveSrcProp } from "#serve-file";
 import { mergeHeaders, resolveHeadersInputOrFn } from "./headers-util.js";
 import { drainWarnings } from "./context.js";
 import { cloneDescriptorTree } from "./types.js";

@@ -1,6 +1,6 @@
 {
   "name": "@johnhenry/servable",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Declaratively describe an HTTP server using JSX -- a small closed set of primitives, a Fetch-API dispatcher, and adapters for Node/Deno/Bun/Cloudflare.",
   "type": "module",
   "repository": {
@@ -49,6 +49,16 @@
     "./adapters/cloudflare": {
       "types": "./dist/adapters/cloudflare.d.ts",
       "default": "./dist/adapters/cloudflare.js"
+    }
+  },
+  "imports": {
+    "#resolve": {
+      "browser": "./dist/src/resolve.browser.js",
+      "default": "./dist/src/resolve.js"
+    },
+    "#serve-file": {
+      "browser": "./dist/src/serve-file.browser.js",
+      "default": "./dist/src/serve-file.js"
     }
   },
   "files": [

@@ -15,7 +15,11 @@
     "skipLibCheck": true,
     "jsx": "react-jsx",
     "jsxImportSource": "@johnhenry/servable",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "paths": {
+      "#resolve": ["./src/resolve.ts"],
+      "#serve-file": ["./src/serve-file.ts"]
+    }
   },
   "include": [
     "src/**/*.ts",
