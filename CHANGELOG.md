@@ -133,6 +133,95 @@
   two new real tests (`test/mount-fileable.test.ts`) proving a `"zip"`
   and a `"wbn"` subtree are each correctly skipped, with the expected
   warning, rather than silently mismounted.
+- **[#4] A bare `<Group>` with no `prefix` prop made every Route inside it
+  unmatchable.** `layout.ts`'s `Group` case joined `ctx.basePath` against
+  `node.props.prefix ?? ""` via `posixJoin`, which returns `path.posix`'s own
+  `"."` when both segments are empty (`posixJoin("", "")`) -- exactly the
+  shape of a root-level `<Group>` written without a `prefix` at all (the
+  single most natural way to write a top-level container). Every Route
+  nested inside then joined its own path against that bogus `"."` instead of
+  `""` (`posixJoin(".", "/hi")` -> `"hi"`, no leading slash), producing a
+  compiled `URLPattern` that could never match any real request path (which
+  always starts with `/`) -- `compile()` on such a tree silently produced a
+  dead route table. Fixed by coercing a `"."` join result back to `""`
+  (this module's actual "no prefix/path yet" value) right where it's
+  produced (`layout.ts`'s new `joinPath()` wrapper around every
+  `Group`/`Route`/`Redirect` path join, not just the `Group` one -- any of
+  them collapsing to `"."` would be equally wrong). Reproduced against the
+  exact reported shape first (`compile()` on a bare `Group({ children:
+  Route(...) })`, confirmed it 404'd before the fix), then covered by new
+  tests: `test/layout.test.ts` (bare-`<Group>`-at-root, and a bare
+  `<Group>` nested inside a prefixed one, to guard against a regression in
+  the other direction) and an end-to-end `test/response.test.ts` case that
+  goes through real `compile()`/`fetch()`, not just `layout()` in isolation.
+- **[#5] No browser-safe entry -- `dist/` imported `node:path`,
+  `node:fs/promises`, `node:crypto` (transitively, via `glob`),
+  `node:readline`/`node:url` at module top level across several files, so
+  `import '@johnhenry/servable'` built under Vite/webpack/esbuild but threw
+  at runtime on the very first `Group`/`Route` (a bundler's empty
+  `node:path` stub has no `join()`), and bundling for production failed
+  outright the moment `glob` (used for `<Group from="glob">` file-based
+  routing) pulled in `node:events`' `EventEmitter`, which a browser bundle
+  has no real implementation of.** Traced every Node built-in use to find
+  which were genuinely load-bearing versus incidental:
+  - `layout.ts`'s (and `mount-fileable.ts`'s) `node:path`/`node:path/posix`
+    use was pure string manipulation (route-path and mounted-URL-path
+    joining, never a real filesystem path) -- replaced with a new
+    dependency-free `src/posix.ts` reimplementing exactly the five
+    functions actually needed (`join`/`normalize`/`dirname`/`basename`/
+    `extname`), verified byte-for-byte identical to the real
+    `node:path/posix` across 2000+ generated cases in `test/posix.test.ts`.
+  - `serve-file.ts`'s Content-Type inference (`inferContentType`) was also
+    pure string manipulation -- split into its own `src/mime-types.ts` so
+    `mount-fileable.ts` (which never touches the filesystem) no longer
+    transitively pulled in `serve-file.ts`'s Node-only branch just to look
+    up a MIME type for a Blob it already had in memory.
+  - `resolve.ts` (Stage 2: glob-expanding `<Group from="...">` and
+    dynamically `import()`-ing matched handler files / a `<Route
+    handler="./mod.js">` string path) and `serve-file.ts`'s local-file
+    read branch (`readFile`/`stat` for a plain string `src`) are genuinely,
+    unavoidably Node-only -- reading arbitrary files off a local disk and
+    dynamically importing them by path has no browser equivalent. Both were
+    split into a shared, browser-safe walking/dispatch core
+    (`resolve-core.ts`, `serve-file-core.ts`) plus two swappable
+    implementations each: the default/Node one (`resolve.ts`,
+    `serve-file.ts`, unchanged behavior) and a new browser-safe one
+    (`resolve.browser.ts`, `serve-file.browser.ts`) that throws a clear,
+    actionable `ServableError` instead of crashing on a bundler's empty
+    `node:fs`/`node:path`/`node:url`/`glob` stub. Everything else Stage 2
+    already did (mounting a `from={fileableTree}`/directly-nested fileable
+    descriptor, generic Promise-valued-prop resolution) and everything else
+    `serve-file.ts` already did (Blob/File, `http(s)://`, `ipfs://` sources
+    via `fetch`) was already browser-safe and is shared unchanged between
+    both.
+  - Wired together via two new `package.json` `"imports"` self-reference
+    entries (`#resolve`, `#serve-file`), each with a `"browser"` condition
+    pointing at the new browser-safe file and a `"default"` condition
+    pointing at the existing Node one -- resolved automatically by Node
+    itself, and by bundlers (Vite/webpack/esbuild) that apply the
+    `"browser"` condition for a client build, with **no import-path change
+    required on the consumer's side**: `import { compile } from
+    '@johnhenry/servable'` gets the right build in both environments.
+    `tsconfig.json` separately maps the same two specifiers to their
+    `.ts` source via `compilerOptions.paths` purely so `tsc` can type-check
+    them without needing `dist/` to already exist (the package.json
+    `imports` map, which only matters at runtime/bundle time, is untouched
+    by this).
+  - Verified empirically, not just by reading the diff: packed the real
+    npm tarball (`npm pack`) and installed it into a scratch app (not a
+    symlinked local dependency, to avoid accidentally picking up this
+    repo's own `tsconfig.json`/`.ts` sources instead of the published
+    `dist/`) -- `vite build` against a `<Group>`/`<Route>`/`compile()`
+    entry point succeeds with zero Node-builtin-externalized warnings
+    (previously failed outright on `glob`'s `EventEmitter`), and the built
+    bundle, actually executed, correctly serves `GET /hi` -> `200 "hi"` and
+    throws the new clear error for a local-filesystem `serveFile()` call
+    instead of crashing. The same tarball installed under plain Node
+    confirms zero regressions: local-filesystem `serveFile()` and the full
+    `layout()`/`compile()` pipeline both still work exactly as before.
+    `@johnhenry/hostable` (which re-exports servable) and
+    `@johnhenry/fileable`'s own tree-building stages likely have the same
+    class of issue -- out of scope here, tracked separately.
 
 ### Changed
 - `adapters/node`'s `serve()` now delegates to

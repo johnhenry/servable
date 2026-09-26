@@ -30,6 +30,32 @@ test('path="/" inside a Group matches both with and without a trailing slash', (
   assert.equal(routes[0].pattern.test("http://x/users/extra"), false);
 });
 
+test("a bare <Group> with no prefix prop at all (not even prefix=\"/\") still makes its Routes matchable (issue #4)", () => {
+  // The most natural way to write a top-level container -- and exactly the
+  // case that was broken: `node.props.prefix` is `undefined` (no prop at
+  // all, as opposed to an explicit `prefix="/"` or `prefix=""`), which used
+  // to join against the root "" basePath via posixJoin("", "") ->
+  // path.posix.join's own "." for all-empty-segments quirk. Every Route
+  // underneath then joined its own path against that bogus "." instead of
+  // "" (e.g. posixJoin(".", "/hi") -> "hi", no leading slash), producing a
+  // URLPattern that could never match any real request path.
+  const tree = Group({ children: Route({ path: "/hi", method: "GET", children: ["hi"] }) });
+  const { routes } = laidOutOf(tree);
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].descriptor.props.path, "/hi");
+  assert.ok(routes[0].pattern.test("http://x/hi"));
+});
+
+test("a bare <Group> with no prefix nested inside a prefixed Group still works (no regression from the #4 fix)", () => {
+  const tree = Group({
+    prefix: "/api",
+    children: Group({ children: Route({ path: "/hi", method: "GET", children: ["hi"] }) }),
+  });
+  const { routes } = laidOutOf(tree);
+  assert.equal(routes.length, 1);
+  assert.ok(routes[0].pattern.test("http://x/api/hi"));
+});
+
 test("two Routes claiming the same method+path throw", () => {
   const tree = Router({
     children: [

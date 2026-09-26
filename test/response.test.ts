@@ -1,13 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { compile } from "../src/compile.js";
-import { Response as ResponseTag, Route, Router } from "../src/components.js";
+import { Group, Response as ResponseTag, Route, Router } from "../src/components.js";
 import { ServableError } from "../src/types.js";
 
 async function get(app: unknown, path: string, init: RequestInit = {}) {
   const compiled = await compile(app);
   return compiled.fetch(new Request(`http://x${path}`, init));
 }
+
+test("compile() on a bare <Group> with no prefix (no Router wrapper either) makes its Route matchable (issue #4)", async () => {
+  // The exact repro from #4: `Group({ children: Route(...) })` -- no
+  // prefix prop, no Router wrapper -- used to compile to a dead route
+  // table (posixJoin("", "") -> "." leaking into every Route's joined
+  // path). end-to-end through compile()/fetch(), not just layout().
+  const app = Group({ children: Route({ method: "GET", path: "/hi", children: ["hi"] }) });
+  const res = await get(app, "/hi");
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), "hi");
+});
 
 test("a bare string child -> 200 text/plain", async () => {
   const res = await get(Router({ children: Route({ path: "/x", method: "GET", children: ["hello"] }) }), "/x");

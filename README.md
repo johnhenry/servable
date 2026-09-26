@@ -33,6 +33,7 @@ place they meet.
   - [Mounting a single bare `<File>` (no `<Dir>` needed)](#mounting-a-single-bare-file-no-dir-needed)
   - [Fileable descriptors are only recognized under `<Router>`/`<Group>`](#fileable-descriptors-are-only-recognized-under-routergroup)
 - [Adapters](#adapters)
+  - [Browser and edge bundling](#browser-and-edge-bundling)
 - [Non-goals](#non-goals)
 - [Examples](#examples)
 - [Family](#family)
@@ -519,6 +520,25 @@ import { serve } from "@johnhenry/servable/adapters/node";
 const handle = serve(compiled, { port: 3000, onListen: (info) => console.log(info.path) });
 // later: await handle[Symbol.asyncDispose]();
 ```
+
+### Browser and edge bundling
+
+`compile()`, every primitive (`Router`/`Group`/`Host`/`Route`/`Use`/
+`ErrorBoundary`/`NotFound`/`Redirect`/`Response`), and `Route`'s `src=`/
+`serveFile()` for a `Blob`/`File`/`http(s)://`/`ipfs://` source are all
+browser-safe -- `import '@johnhenry/servable'` doesn't touch a Node
+built-in for any of that, and bundles cleanly under Vite/webpack/esbuild
+(automatically, via the package's `"browser"` export condition -- no
+special config or alternate import path needed).
+
+Two capabilities are genuinely Node-only, since they read from a real local
+filesystem: `<Group from="./handlers/**/*.js">` (glob-based file routing)
+and `serveFile()`/`src=` given a plain local file path string. Both still
+work exactly as before under Node (or a Node-targeting bundle); under a
+browser/Worker bundle they throw a clear `ServableError` instead of
+crashing on an empty `node:fs`/`node:path`/`glob` stub -- build your route
+tree from in-memory `<Route handler={fn}>` functions instead, or serve a
+`Blob`/`http(s)://`/`ipfs://` source.
 
 ## Non-goals
 

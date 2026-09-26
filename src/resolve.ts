@@ -1,27 +1,20 @@
 /**
- * Stage 2: Resolve.
- *
- * Walks the full tree and resolves everything that needs async work:
- *  - `<Group from="glob">` expansion into synthesized `<Route>` children
- *    (file-based routing) -- mirrors fileable's `<Dir from>`, including
- *    preserving matched files' relative subdirectory structure instead of
- *    flattening to a bare basename.
- *  - `<Group from={fileableTree}>` -- mounts a fileable Descriptor tree's
- *    artifacts as static routes (see mount-fileable.ts), lazily importing
- *    `@johnhenry/fileable` only when this is actually used.
- *  - `handler="./mod.js"` (import a module, its default export is the handler)
- *  - any other Promise-valued prop, generically
- *
- * Errors are wrapped with the offending node's tree path before propagating,
- * same as fileable's resolve.ts.
+ * Node/full build of resolve-core.ts's Stage 2 walk -- adds the two
+ * genuinely Node-only capabilities on top of it: expanding a `<Group from>`
+ * glob pattern/file list (via the `glob` package) and dynamically
+ * `import()`-ing matched handler files / a `<Route handler="./mod.js">`
+ * string path (via `node:url`'s `pathToFileURL` + `node:path`). Resolved
+ * automatically via this package's `#resolve` internal import (see
+ * package.json's `imports` field) whenever a bundler/runtime doesn't
+ * explicitly resolve the `"browser"` condition -- see #5.
  */
 import { extname, isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { glob } from "glob";
-import { isDescriptor, isFileableDescriptor, isLinkRef, isThenable, ServableError } from "./types.js";
-import type { CompileOptions, Descriptor, DescriptorChild } from "./types.js";
+import { isThenable, ServableError } from "./types.js";
+import type { Descriptor } from "./types.js";
 import { splitGlobBase, toPosixPattern } from "./glob-util.js";
-import { mountFileableTree } from "./mount-fileable.js";
+import { createResolve } from "./resolve-core.js";
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
@@ -29,7 +22,7 @@ function isThenableArray(value: unknown): value is Promise<string[]> {
   return isThenable(value);
 }
 
-async function resolveFromGlob(
+async function resolveFromGlobPattern(
   pattern: string | Promise<string[]> | string[],
   baseDir: string,
   path: string,
@@ -63,11 +56,7 @@ async function loadHandlerModule(absolute: string, path: string): Promise<Record
 }
 
 /** One matched handler file -> one Route per exported HTTP-method handler, or one GET Route for a plain default export. */
-async function synthesizeRoutesFromFile(
-  absolute: string,
-  routePath: string,
-  path: string,
-): Promise<Descriptor[]> {
+async function synthesizeRoutesFromFile(absolute: string, routePath: string, path: string): Promise<Descriptor[]> {
   const mod = await loadHandlerModule(absolute, path);
   const methodExports = HTTP_METHODS.filter((m) => typeof mod[m] === "function");
   if (methodExports.length > 0) {
@@ -86,124 +75,35 @@ async function synthesizeRoutesFromFile(
   );
 }
 
-export async function resolve(roots: Descriptor[], options: CompileOptions = {}): Promise<Descriptor[]> {
-  const baseDir = options.cwd ?? process.cwd();
+export const resolve = createResolve({
+  defaultBaseDir: () => process.cwd(),
 
-  async function resolveNode(node: Descriptor, path: string): Promise<void> {
-    if (node.tag === "group" && node.props.from !== undefined) {
-      const fromValue = node.props.from;
-      if (isFileableDescriptor(fromValue)) {
-        const mounted = await mountFileableTree(fromValue, path);
-        node.children = [...mounted, ...node.children];
-      } else {
-        const pattern = fromValue as string | Promise<string[]> | string[];
-        const matches = await resolveFromGlob(pattern, baseDir, path);
-        // Resolved to an absolute path up front so this is correct whether
-        // the original pattern was relative or already absolute -- mixing
-        // an absolute `patternBase` against a relative match (or vice
-        // versa) made the old startsWith-based prefix check silently fail
-        // and collapse every match to a bare basename, found by actually
-        // running this against an absolute glob pattern.
-        const patternBase = typeof pattern === "string" ? splitGlobBase(toPosixPattern(pattern)).base : "";
-        const absoluteBase = patternBase ? resolvePath(baseDir, patternBase) : baseDir;
-        const synthesized: Descriptor[] = [];
-        for (const match of matches) {
-          const relativeToBase = toPosixPattern(relativePath(absoluteBase, match));
-          const withoutExt = relativeToBase.slice(0, relativeToBase.length - extname(match).length);
-          const routePath = `/${withoutExt}`;
-          synthesized.push(...(await synthesizeRoutesFromFile(match, routePath, path)));
-        }
-        node.children = [...synthesized, ...node.children];
-      }
+  async resolveGlobFrom(fromValue, baseDir, path) {
+    const matches = await resolveFromGlobPattern(fromValue, baseDir, path);
+    // Resolved to an absolute path up front so this is correct whether the
+    // original pattern was relative or already absolute -- mixing an
+    // absolute `patternBase` against a relative match (or vice versa) made
+    // the old startsWith-based prefix check silently fail and collapse
+    // every match to a bare basename, found by actually running this
+    // against an absolute glob pattern.
+    const patternBase = typeof fromValue === "string" ? splitGlobBase(toPosixPattern(fromValue)).base : "";
+    const absoluteBase = patternBase ? resolvePath(baseDir, patternBase) : baseDir;
+    const synthesized: Descriptor[] = [];
+    for (const match of matches) {
+      const relativeToBase = toPosixPattern(relativePath(absoluteBase, match));
+      const withoutExt = relativeToBase.slice(0, relativeToBase.length - extname(match).length);
+      const routePath = `/${withoutExt}`;
+      synthesized.push(...(await synthesizeRoutesFromFile(match, routePath, path)));
     }
+    return synthesized;
+  },
 
-    if (node.tag === "route") {
-      const handler = node.props.handler;
-      if (typeof handler === "string") {
-        const absolute = isAbsolute(handler) ? handler : resolvePath(baseDir, handler);
-        const mod = await loadHandlerModule(absolute, path);
-        if (typeof mod.default !== "function") {
-          throw new ServableError(`handler module "${handler}" has no default export function`, path);
-        }
-        node.props.handler = mod.default;
-      }
+  async resolveStringHandler(handler, baseDir, path) {
+    const absolute = isAbsolute(handler) ? handler : resolvePath(baseDir, handler);
+    const mod = await loadHandlerModule(absolute, path);
+    if (typeof mod.default !== "function") {
+      throw new ServableError(`handler module "${handler}" has no default export function`, path);
     }
-
-    // Generic fallback: any other promise-valued prop (future-proofing).
-    for (const [key, value] of Object.entries(node.props)) {
-      if (key === "from" || key === "handler") continue;
-      if (isThenable(value)) {
-        try {
-          node.props[key] = await value;
-        } catch (cause) {
-          throw new ServableError(`prop "${key}" promise rejected`, path, cause);
-        }
-      }
-    }
-
-    // A fileable descriptor (<Dir>/<File>/<Rm>, or generic markup nested
-    // under one) placed directly as a child of <Router>/<Group>/<Host> --
-    // not just behind `from=` -- is mounted the same way `from={fileableTree}`
-    // is. Scoped to router/group/host (the containment/scope primitives)
-    // rather than every node, since e.g. a Route's children are a *static
-    // value* slot, a different semantic than "nested primitives" -- mixing
-    // the two would make an accidental fileable descriptor in a Route's
-    // content silently ambiguous instead of clearly out of scope. <Host> is
-    // included so a fileable tree mounted directly under a Host (no Group
-    // wrapper) is hostname-qualified by Layout exactly like a literal
-    // <Route> would be -- the whole point of Host now being a real Layout-
-    // stage scope, not a pre-Build rewrite that could only qualify nodes it
-    // could already see (see layout.ts's own module doc comment).
-    const childPath = `${path} > ${String(node.tag)}`;
-    if (node.tag === "router" || node.tag === "group" || node.tag === "host") {
-      const resolvedChildren: DescriptorChild[] = [];
-      for (const child of node.children) {
-        if (isDescriptor(child) && isFileableDescriptor(child)) {
-          resolvedChildren.push(...(await mountFileableTree(child, childPath)));
-          continue;
-        }
-        await resolveChild(child, childPath);
-        resolvedChildren.push(child);
-      }
-      node.children = resolvedChildren;
-    } else {
-      for (const child of node.children) {
-        // A fileable descriptor outside router/group scope used to fail
-        // silently and confusingly: compile.ts's resolveStaticChildren has
-        // no idea what a <File>/<Dir> means, so it fell into the generic
-        // "JSX markup -> HTML" path and serialized the descriptor's own
-        // {tag,props,children} shape as literal tag text (e.g. a Route's
-        // response body became the literal string
-        // `<file name="x.html">content</file>`) -- wrong output, no error,
-        // discovered only by actually inspecting a response body. Caught
-        // here instead, at compile time, with an actionable message.
-        if (isDescriptor(child) && isFileableDescriptor(child)) {
-          throw new ServableError(
-            `a fileable <${String(child.tag)}> descriptor can't be used here, under <${String(node.tag)}> -- ` +
-              "fileable descriptors are only mounted as static routes when they're a direct child of " +
-              "<Router>/<Group>/<Host> (or a Group's own from= prop). For a single file's content at one Route, " +
-              "use that Route's own body handling (a string/Response/BodyInit/object child) or its src= prop " +
-              "instead of fileable's <File>.",
-            childPath,
-          );
-        }
-        await resolveChild(child, childPath);
-      }
-    }
-  }
-
-  async function resolveChild(child: DescriptorChild, path: string): Promise<void> {
-    if (isDescriptor(child)) {
-      await resolveNode(child, path);
-    } else if (Array.isArray(child)) {
-      for (const item of child) await resolveChild(item, path);
-    } else if (isLinkRef(child) && isDescriptor(child.target)) {
-      // Target descriptors are resolved in place wherever they live in the tree.
-    }
-  }
-
-  for (const root of roots) {
-    await resolveNode(root, String(root.tag));
-  }
-  return roots;
-}
+    return mod.default;
+  },
+});

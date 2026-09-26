@@ -18,7 +18,7 @@
  *     (which only run per-request, long after compile() has finished; see
  *     api.ts's linkTo() for the two-mode explanation).
  */
-import { join as posixJoin } from "node:path/posix";
+import { join as posixJoin } from "./posix.js";
 import { isDescriptor, isLinkRef, ServableError } from "./types.js";
 import type {
   Descriptor,
@@ -30,6 +30,30 @@ import type {
 } from "./types.js";
 import { compilePath, URLPatternImpl } from "./urlpattern.js";
 import { linkRegistry } from "./link-registry.js";
+
+/**
+ * `posixJoin`'s POSIX semantics return `"."` when every segment is empty
+ * (`posixJoin("", "")` -- same as real `node:path/posix`'s `join()`, see
+ * posix.ts's own doc comment). `""` is this module's "no prefix/path yet"
+ * value everywhere else (the root `basePath` a walk starts with, a `<Group>`
+ * with no `prefix` prop, ...), so a bare `.` leaking out of a join is never
+ * actually meaningful here -- it's coerced back to `""` right where it's
+ * produced instead of silently becoming a real (bogus, non-"/"-leading)
+ * path segment every route/redirect underneath then joins against.
+ *
+ * This is what actually fixes issue #4: a root-level `<Group>` with no
+ * `prefix` joins `ctx.basePath` ("") against `prefix` ("") here, which used
+ * to produce `nextBasePath = "."` -- every Route inside then joined its own
+ * path against `"."` (e.g. `posixJoin(".", "/hi")` -> `"hi"`, no leading
+ * slash), producing a compiled URLPattern that can never match a real
+ * request path (which always starts with `/`). Every `<Group>`/`<Route>`/
+ * `<Redirect>` path join below goes through this wrapper for the same
+ * reason -- any of them collapsing to "." would be equally wrong.
+ */
+function joinPath(...segments: string[]): string {
+  const joined = posixJoin(...segments);
+  return joined === "." ? "" : joined;
+}
 
 export type WrapperFrame = { kind: "use"; middleware: Middleware } | { kind: "errorboundary"; handler: ErrorHandler };
 
@@ -116,7 +140,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
       }
       case "group": {
         const prefix = (node.props.prefix as string | undefined) ?? "";
-        const nextBasePath = posixJoin(ctx.basePath, prefix);
+        const nextBasePath = joinPath(ctx.basePath, prefix);
         const nextHeadersLayers =
           node.props.headers !== undefined ? [...ctx.headersLayers, node.props.headers as HeadersInputOrFn] : ctx.headersLayers;
         const nextCtx: WalkCtx = { basePath: nextBasePath, hostname: ctx.hostname, chain: ctx.chain, headersLayers: nextHeadersLayers };
@@ -177,9 +201,9 @@ export function layout(roots: Descriptor[]): LayoutResult {
         // consistent with everything else in a scope being scope-relative
         // by default -- except an absolute http(s):// URL, which obviously
         // isn't meant to be joined with a local path prefix.
-        const resolvedTo = /^https?:\/\//.test(to) ? to : posixJoin(ctx.basePath, to);
+        const resolvedTo = /^https?:\/\//.test(to) ? to : joinPath(ctx.basePath, to);
         redirects.push({
-          pattern: compilePath(posixJoin(ctx.basePath, from), ctx.hostname),
+          pattern: compilePath(joinPath(ctx.basePath, from), ctx.hostname),
           to: resolvedTo,
           status: (node.props.status as number | undefined) ?? 301,
           chain: ctx.chain,
@@ -225,7 +249,7 @@ export function layout(roots: Descriptor[]): LayoutResult {
     // directory index -- still matches the same route.
     const isBareGroupRoot = typeof rawPath === "string" && rawPath === "/" && ctx.basePath !== "";
     const finalPath =
-      typeof rawPath === "string" ? (rawPath === "/" ? ctx.basePath || "/" : posixJoin(ctx.basePath, rawPath)) : rawPath;
+      typeof rawPath === "string" ? (rawPath === "/" ? ctx.basePath || "/" : joinPath(ctx.basePath, rawPath)) : rawPath;
     const patternSource = isBareGroupRoot ? `${ctx.basePath}{/}?` : finalPath;
     const key = dedupKey(method, finalPath, ctx.hostname);
     if (dedup.has(key)) {

@@ -62,9 +62,9 @@
  * different concern than "nested mountable primitives"; use `Route`'s own
  * body/`src=` handling for a single file's content at one route instead).
  */
-import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize, basename } from "node:path/posix";
+import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize, basename } from "./posix.js";
 import { recordWarning } from "./context.js";
-import { inferContentType } from "./serve-file.js";
+import { inferContentType } from "./mime-types.js";
 import { ServableError } from "./types.js";
 import type { Descriptor, FileableTreeLike } from "./types.js";
 

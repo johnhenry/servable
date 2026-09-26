@@ -1,0 +1,212 @@
+/**
+ * Backs both `Route`'s `src`/`download` props and the standalone
+ * `serveFile()` helper -- one mechanism for video/audio/image/pdf/download
+ * serving, deliberately not five media-specific tags (see the design plan's
+ * "Rejected additions"). Range support (206/`Accept-Ranges`/`Content-Range`)
+ * is on by default via `Blob.prototype.slice()`, the standard platform
+ * primitive for exactly this -- not a bespoke byte-slicer. Conditional
+ * requests (`ETag`/`If-None-Match` -> 304) are plain `Headers` comparison,
+ * not the Cache API (excluded elsewhere in this design for being
+ * inconsistently supported across runtimes).
+ *
+ * No caching layer: every request re-reads the source. Simple, correct,
+ * and consistent with excluding the Cache API -- a deliberate limitation,
+ * not an oversight; compose your own caching `Use` around it if needed.
+ * (For `ipfs://` specifically, every request re-fetching through the
+ * gateway is a real, known cost this package doesn't try to hide --
+ * compose a caching `Use` the same way you would for any other `src`.)
+ *
+ * `ipfs://<cid>/<path>` (EXAMPLE) is a second URI scheme `resolveAsset()`
+ * recognizes, right alongside `https://` -- the same "one more branch"
+ * move `@johnhenry/fileable`'s own `loadSrc()` uses for the exact same
+ * scheme, independently implemented here since `Route src` resolves fresh
+ * per-request rather than once at compile time.
+ *
+ * SPLIT (see #5): everything in THIS file is browser-safe -- Blob/File,
+ * `http(s)://`, and `ipfs://` sources only ever use `fetch`/`Blob`/
+ * `Headers`, standard Fetch-API primitives available in Node, browsers,
+ * Deno, Bun, and Cloudflare Workers alike. The one genuinely Node-only
+ * case -- a plain string `src` that's actually a local filesystem path --
+ * is factored out behind the `readLocalFile` hook below, so this module
+ * itself never imports `node:fs`/`node:path`. `serve-file.ts` (the default/
+ * Node build) supplies a real `node:fs/promises`-backed hook;
+ * `serve-file.browser.ts` (used automatically when a bundler resolves the
+ * `"browser"` condition) supplies one that throws a clear, actionable error
+ * instead of silently failing on a bundler's empty `node:fs` stub.
+ */
+import { basename } from "./posix.js";
+import { inferContentType } from "./mime-types.js";
+import { ServableError } from "./types.js";
+import type { RouteContext, SrcValue } from "./types.js";
+
+export { inferContentType } from "./mime-types.js";
+
+const DEFAULT_IPFS_GATEWAY = "https://ipfs.io/ipfs/";
+
+export interface ResolvedAsset {
+  blob: Blob;
+  contentType: string;
+  etag?: string;
+  lastModified?: Date;
+  filename: string;
+}
+
+export interface ServeFileHooks {
+  /** Reads a plain string `src` that isn't a Blob/File, `http(s)://`, or `ipfs://` -- i.e. a local filesystem path. */
+  readLocalFile(source: string): Promise<ResolvedAsset>;
+}
+
+async function resolveAsset(
+  source: SrcValue,
+  hooks: ServeFileHooks,
+  ipfsGateway: string = DEFAULT_IPFS_GATEWAY,
+): Promise<ResolvedAsset> {
+  if (typeof source !== "string") {
+    // An in-memory Blob (or File, which extends Blob) -- no filesystem
+    // identity, so no ETag/Last-Modified; a File's own .name is used for
+    // Content-Type inference and download filenames when present.
+    const name = (source as { name?: string }).name ?? "download";
+    return {
+      blob: source,
+      contentType: source.type || inferContentType(name),
+      filename: name,
+    };
+  }
+  if (/^ipfs:\/\//.test(source)) {
+    const rest = source.slice("ipfs://".length);
+    const url = ipfsGateway.endsWith("/") ? `${ipfsGateway}${rest}` : `${ipfsGateway}/${rest}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new ServableError(`ipfs fetch failed: ${source} via ${url} (${res.status})`, source);
+    }
+    const blob = await res.blob();
+    const filename = basename(rest) || "download";
+    return {
+      blob,
+      contentType: res.headers.get("content-type") ?? inferContentType(filename),
+      etag: res.headers.get("etag") ?? undefined,
+      filename,
+    };
+  }
+  if (/^https?:\/\//.test(source)) {
+    const res = await fetch(source);
+    if (!res.ok) {
+      throw new ServableError(`src fetch failed: ${source} (${res.status})`, source);
+    }
+    const blob = await res.blob();
+    const filename = basename(new URL(source).pathname) || "download";
+    return {
+      blob,
+      contentType: res.headers.get("content-type") ?? inferContentType(filename),
+      etag: res.headers.get("etag") ?? undefined,
+      filename,
+    };
+  }
+  return hooks.readLocalFile(source);
+}
+
+function contentDisposition(download: boolean | string | undefined, filename: string): string | undefined {
+  if (!download) return undefined;
+  const name = typeof download === "string" ? download : filename;
+  // eslint-disable-next-line no-control-regex
+  const isAscii = /^[\x00-\x7F]*$/.test(name);
+  if (isAscii) return `attachment; filename="${name.replace(/"/g, "'")}"`;
+  return `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(name)}`;
+}
+
+interface RangeSpec {
+  start: number;
+  end: number; // inclusive
+}
+
+/** Parses a single-range `Range: bytes=...` header. Multi-range requests are not supported (rare in practice; falls back to a full response). */
+function parseRange(rangeHeader: string, totalSize: number): RangeSpec | "unsatisfiable" | undefined {
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+  if (!match || match[0].includes(",")) return undefined;
+  const [, startStr, endStr] = match;
+  let start: number;
+  let end: number;
+  if (startStr === "" && endStr !== "") {
+    // Suffix range: last N bytes.
+    const suffixLength = Number(endStr);
+    start = Math.max(0, totalSize - suffixLength);
+    end = totalSize - 1;
+  } else {
+    start = startStr === "" ? 0 : Number(startStr);
+    end = endStr === "" ? totalSize - 1 : Number(endStr);
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= totalSize || start < 0) {
+    return "unsatisfiable";
+  }
+  return { start, end: Math.min(end, totalSize - 1) };
+}
+
+export interface ServeFileOptions {
+  download?: boolean | string;
+  /** See `CompileOptions.ipfsGateway`'s own doc comment. Default: `"https://ipfs.io/ipfs/"`. */
+  ipfsGateway?: string;
+}
+
+export interface ServeFileFns {
+  serveFile(req: Request, source: SrcValue, options?: ServeFileOptions): Promise<globalThis.Response>;
+  serveSrcProp(
+    req: Request,
+    ctx: RouteContext,
+    src: SrcValue | ((req: Request, ctx: RouteContext) => SrcValue | Promise<SrcValue>),
+    options: ServeFileOptions,
+  ): Promise<globalThis.Response>;
+}
+
+/** Builds `{ serveFile, serveSrcProp }` against the given local-filesystem hook -- see serve-file.ts (Node) and serve-file.browser.ts for the two implementations. */
+export function createServeFile(hooks: ServeFileHooks): ServeFileFns {
+  async function serveFile(req: Request, source: SrcValue, options: ServeFileOptions = {}): Promise<globalThis.Response> {
+    const asset = await resolveAsset(source, hooks, options.ipfsGateway);
+    const totalSize = asset.blob.size;
+
+    const headers = new Headers();
+    headers.set("Content-Type", asset.contentType);
+    headers.set("Accept-Ranges", "bytes");
+    if (asset.etag) headers.set("ETag", asset.etag);
+    if (asset.lastModified) headers.set("Last-Modified", asset.lastModified.toUTCString());
+    const disposition = contentDisposition(options.download, asset.filename);
+    if (disposition) headers.set("Content-Disposition", disposition);
+
+    const ifNoneMatch = req.headers.get("if-none-match");
+    if (asset.etag && ifNoneMatch && ifNoneMatch === asset.etag) {
+      return new globalThis.Response(null, { status: 304, headers });
+    }
+
+    const isHead = req.method === "HEAD";
+    const rangeHeader = req.headers.get("range");
+
+    if (rangeHeader) {
+      const range = parseRange(rangeHeader, totalSize);
+      if (range === "unsatisfiable") {
+        headers.set("Content-Range", `bytes */${totalSize}`);
+        return new globalThis.Response(null, { status: 416, headers });
+      }
+      if (range) {
+        const sliced = asset.blob.slice(range.start, range.end + 1);
+        headers.set("Content-Range", `bytes ${range.start}-${range.end}/${totalSize}`);
+        headers.set("Content-Length", String(range.end - range.start + 1));
+        return new globalThis.Response(isHead ? null : sliced, { status: 206, headers });
+      }
+    }
+
+    headers.set("Content-Length", String(totalSize));
+    return new globalThis.Response(isHead ? null : asset.blob, { status: 200, headers });
+  }
+
+  /** Resolves `Route`'s `src` prop (a value, or a function of the request) into a servable asset response. */
+  async function serveSrcProp(
+    req: Request,
+    ctx: RouteContext,
+    src: SrcValue | ((req: Request, ctx: RouteContext) => SrcValue | Promise<SrcValue>),
+    options: ServeFileOptions,
+  ): Promise<globalThis.Response> {
+    const resolved = typeof src === "function" ? await src(req, ctx) : src;
+    return serveFile(req, resolved, options);
+  }
+
+  return { serveFile, serveSrcProp };
+}
