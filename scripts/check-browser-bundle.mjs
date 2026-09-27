@@ -107,7 +107,16 @@ function main() {
     // real `npm install @johnhenry/servable` would place it.
     const scopeDir = join(scratchDir, "node_modules", "@johnhenry");
     mkdirSync(scopeDir, { recursive: true });
-    execFileSync("tar", ["-xf", tarballPath, "-C", packDir]);
+    // On Windows, tar misreads a "C:\..." path's drive-letter colon as an
+    // old-style "host:path" remote-archive spec ("Cannot connect to C:"),
+    // unless told the archive is local. --force-local exists for exactly
+    // this; macOS's bsdtar doesn't recognize the flag at all, so it's only
+    // added on win32.
+    const tarArgs =
+      process.platform === "win32"
+        ? ["-xf", tarballPath, "-C", packDir, "--force-local"]
+        : ["-xf", tarballPath, "-C", packDir];
+    execFileSync("tar", tarArgs);
     cpSync(join(packDir, "package"), join(scopeDir, "servable"), { recursive: true });
 
     // Peer deps -- symlinked from this repo's own already-resolved
