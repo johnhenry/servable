@@ -124,7 +124,23 @@ const MOUNT_ROOT_SYNTHETIC_FILE_NAME = "index.html";
 export async function mountFileableTree(tree: FileableTreeLike, path: string): Promise<Descriptor[]> {
   let fileable: FileableModule;
   try {
-    fileable = (await import("@johnhenry/fileable")) as unknown as FileableModule;
+    // Resolved via this package's `#fileable` internal self-import (see
+    // package.json's `imports` field): the `"browser"` condition points at
+    // `@johnhenry/fileable/browser` (build/resolve/layout only, no
+    // `node:*`), `"default"` points at fileable's real Node main entry
+    // (full capability, including local `src=` reads/`cmd`/glob-based
+    // `Dir from`). Importing the plain `"@johnhenry/fileable"` specifier
+    // here unconditionally -- as this used to do -- resolves to fileable's
+    // Node-only main entry (`api.js` imports `glob` at module load time)
+    // even under a browser bundle, pulling `glob` -> `node:events`'
+    // `EventEmitter` back into the bundle the moment ANY `<Group from={tree}>`
+    // exists in the tree, whether or not it's ever actually reached at
+    // runtime -- a bundler statically bundles a dynamically-`import()`ed
+    // local/dependency module inline by default (no `--splitting`
+    // required for that; only lazy-chunking a *separate* file needs it),
+    // so this was pulled in unconditionally on `import '@johnhenry/servable'`
+    // itself, not just when `<Group from>` is actually used. See #7.
+    fileable = (await import("#fileable")) as unknown as FileableModule;
   } catch (cause) {
     throw new ServableError(
       '<Group from> was given a fileable tree, but "@johnhenry/fileable" isn\'t installed -- ' +

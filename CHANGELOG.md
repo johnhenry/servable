@@ -1,5 +1,75 @@
 # Changelog
 
+## 0.0.2 (2026-09-26)
+
+### Fixed
+- **[#7] `<Group from={fileableTree}>` unconditionally pulled `glob` (and
+  `glob`'s `node:events` dependency) into a browser bundle, and
+  `exports["."]` had no `"browser"` condition at all.** Two related gaps
+  found while updating ORRERY's JSX Studio room, on top of #5's browser
+  build (which only covered `compile()`/the primitives/`serveFile()`, not
+  mounting a fileable tree):
+  - `mount-fileable.ts` lazily did `await import("@johnhenry/fileable")`
+    unconditionally -- that specifier always resolves to fileable's
+    Node-only main entry (its `api.ts` imports `glob` at module load time,
+    for `useCollection()`), regardless of which build target was asking.
+    A bundler statically includes a dynamically-`import()`ed
+    local/dependency module inline by default (no `--splitting` needed for
+    that -- only lazy-chunking a *separate* output file does), so this
+    dragged `glob` -> `node:events` into a browser bundle the moment
+    `import '@johnhenry/servable'` happened at all, whether or not
+    `<Group from>` was ever actually used at runtime. Fixed the same way
+    `#5` split `resolve.ts`/`serve-file.ts`: a new `#fileable` self-import
+    (package.json's `imports` field) with a `"browser"` condition pointing
+    at `@johnhenry/fileable/browser` (build/resolve/layout only, zero
+    `node:*` imports, added in fileable 0.0.3/#6) and a `"default"`
+    condition pointing at the real `@johnhenry/fileable` Node entry (full
+    capability -- local `src=` reads, `cmd`, glob-based `Dir from`,
+    `env://` -- unchanged for Node/Node-targeting-bundle consumers).
+    `mount-fileable.ts` now does `await import("#fileable")` instead of
+    the plain specifier. The peer/dev dependency range on
+    `@johnhenry/fileable` is bumped to `>=0.0.3`/`^0.0.3` accordingly --
+    the `./browser` subpath this depends on doesn't exist before that.
+  - `exports["."]` had `types`/`default` only, no `"browser"` key -- added
+    one, pointing at the same `./dist/src/index.js` as `"default"` (there's
+    no need for a *separate* browser index file: `index.js` itself is
+    already fully browser-safe once its own internal `#resolve`/
+    `#serve-file`/`#fileable` self-imports resolve the `"browser"`
+    condition, which they do regardless of `exports["."]`'s own keys --
+    this key mainly matters for bundler heuristics/tooling that check
+    "does this package declare browser support" against the export map
+    directly, and makes the already-true behavior explicit rather than
+    accidental).
+  - Verified for real, not just "it builds": a new `scripts/
+    check-browser-bundle.mjs` (wired into `npm test` as `test:browser-
+    bundle`) runs `npm pack` on the real tarball, extracts it into a
+    scratch `node_modules` (peer deps symlinked from this repo's own
+    already-resolved `node_modules`, not reinstalled), and bundles a broad
+    entry point re-exporting everything `@johnhenry/servable`'s index
+    exports with esbuild's real JS API (`platform: "browser"`,
+    `conditions: ["browser"]`), then scans the actual output text for
+    forbidden markers (`node_modules/glob/`, fileable's Node-only files,
+    any literal `node:` import) as a second check beyond "esbuild didn't
+    error." Confirmed as a genuine negative control, not just reasoned
+    about: reverted both file changes and re-ran the same script against
+    the same tarball-repack process -- it fails with exactly the expected
+    `node:events`/`node:fs`/`node:crypto`/... resolution errors pre-fix,
+    and passes clean post-fix. Testing against the *packed* tarball
+    specifically (not a live/symlinked checkout of this repo) matters: this
+    repo's own `tsconfig.json` maps `#resolve`/`#serve-file`/`#fileable`
+    back to their plain, unconditional source via `compilerOptions.paths`
+    (purely so `tsc` can type-check them before `dist/` exists), and a
+    tsconfig-paths-aware bundler resolver honors that same mapping when
+    `tsconfig.json` is reachable on disk next to the code being bundled --
+    silently defeating the `"browser"`/`"default"` conditional split
+    entirely and always resolving to the unconditional Node source. A
+    *published* package never ships `tsconfig.json` (see `files` in
+    `package.json`), so a real downstream consumer never hits this, but it
+    means a bundle check against a live checkout is not sufficient
+    evidence on its own -- confirmed this the hard way, by first getting a
+    false failure signal against a live symlinked copy of this repo before
+    switching the check to the real packed tarball.
+
 ## Unreleased
 
 ### Added

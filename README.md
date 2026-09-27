@@ -335,8 +335,13 @@ Runs fileable's own exported `build`/`resolve`/`layout` stages (stopping
 short of Hash/Write -- nothing is written to disk) to get a real artifact
 list: paths, byte-exact content, binary-safety already solved by
 fileable's UTF-8-round-trip detection. `@johnhenry/fileable` is an
-**optional peer dependency**, lazily imported only when a `from` value
-duck-types as a fileable tree -- routing-only consumers never pay for it.
+**optional peer dependency** (`>=0.0.3`, the first version that ships a
+`./browser` subpath), lazily imported only when a `from` value duck-types
+as a fileable tree -- routing-only consumers never pay for it. Under a
+browser/edge bundle (`"browser"` export condition), this resolves to
+`@johnhenry/fileable/browser` instead of fileable's Node main entry, so
+mounting a fileable tree doesn't pull `glob` (and its `node:events`
+dependency) into a browser build -- see "Browser and edge bundling" below.
 
 **Naming**: a `Dir`/`File`'s name is *always* part of the mounted URL, root
 or nested -- no special-casing. If you give the mount root a name, it
@@ -524,12 +529,19 @@ const handle = serve(compiled, { port: 3000, onListen: (info) => console.log(inf
 ### Browser and edge bundling
 
 `compile()`, every primitive (`Router`/`Group`/`Host`/`Route`/`Use`/
-`ErrorBoundary`/`NotFound`/`Redirect`/`Response`), and `Route`'s `src=`/
-`serveFile()` for a `Blob`/`File`/`http(s)://`/`ipfs://` source are all
+`ErrorBoundary`/`NotFound`/`Redirect`/`Response`), `Route`'s `src=`/
+`serveFile()` for a `Blob`/`File`/`http(s)://`/`ipfs://` source, and
+mounting a fileable tree (`<Group from={fileableTree}>`) are all
 browser-safe -- `import '@johnhenry/servable'` doesn't touch a Node
 built-in for any of that, and bundles cleanly under Vite/webpack/esbuild
-(automatically, via the package's `"browser"` export condition -- no
-special config or alternate import path needed).
+(automatically, via the package's `"browser"` export condition on
+`exports["."]` plus its internal `#resolve`/`#serve-file`/`#fileable`
+self-imports -- no special config or alternate import path needed beyond
+your bundler's own browser-target setup, e.g. esbuild's
+`--platform=browser` or Vite's default client build). Mounting a fileable
+tree resolves `@johnhenry/fileable`'s `./browser` subpath instead of its
+Node main entry under this same condition, so it never pulls `glob` (and
+`glob`'s `node:events` dependency) into a browser bundle.
 
 Two capabilities are genuinely Node-only, since they read from a real local
 filesystem: `<Group from="./handlers/**/*.js">` (glob-based file routing)
@@ -538,7 +550,11 @@ work exactly as before under Node (or a Node-targeting bundle); under a
 browser/Worker bundle they throw a clear `ServableError` instead of
 crashing on an empty `node:fs`/`node:path`/`glob` stub -- build your route
 tree from in-memory `<Route handler={fn}>` functions instead, or serve a
-`Blob`/`http(s)://`/`ipfs://` source.
+`Blob`/`http(s)://`/`ipfs://` source. The same is true of a *mounted*
+fileable tree's own Node-only capabilities (a local `src=` file path,
+`cmd`, `<Dir from="glob">`, `env://`) -- fileable's `./browser` subpath
+throws its own equivalent, clear `FileableError` for those, pointing back
+at fileable's Node entry point.
 
 ## Non-goals
 
