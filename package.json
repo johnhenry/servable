@@ -1,6 +1,6 @@
 {
   "name": "@johnhenry/servable",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Declaratively describe an HTTP server using JSX -- a small closed set of primitives, a Fetch-API dispatcher, and adapters for Node/Deno/Bun/Cloudflare.",
   "type": "module",
   "repository": {

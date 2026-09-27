@@ -268,5 +268,12 @@ export async function compile(tree: unknown, options: CompileOptions = {}): Prom
     return executeNotFound(nearestScope(laidOut.scopes, url), req);
   }
 
-  return { fetch: dispatch, warnings: [...laidOut.warnings, ...drainWarnings()] };
+  // Mount-fileable-sourced warnings now come straight back from resolve()'s
+  // own per-call return value (resolvedRoots.warnings, see resolve-core.ts's
+  // ResolvedRoots) rather than a module-global accumulator -- see issue #9.
+  // drainWarnings() still covers the one remaining global source: warn()
+  // (api.ts), a deliberately global, fire-and-forget escape hatch any user
+  // code can call at any time (mirroring fileable's own warn(), see
+  // context.ts), not tied to any particular pipeline stage's own call.
+  return { fetch: dispatch, warnings: [...laidOut.warnings, ...resolvedRoots.warnings, ...drainWarnings()] };
 }

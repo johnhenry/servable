@@ -63,7 +63,6 @@
  * body/`src=` handling for a single file's content at one route instead).
  */
 import { dirname as posixDirname, join as posixJoin, normalize as posixNormalize, basename } from "./posix.js";
-import { recordWarning } from "./context.js";
 import { inferContentType } from "./mime-types.js";
 import { ServableError } from "./types.js";
 import type { Descriptor, FileableTreeLike } from "./types.js";
@@ -121,7 +120,13 @@ function resolveSymlinkTarget(ownOutputPath: string, symlinkTo: string): string 
  */
 const MOUNT_ROOT_SYNTHETIC_FILE_NAME = "index.html";
 
-export async function mountFileableTree(tree: FileableTreeLike, path: string): Promise<Descriptor[]> {
+/** `mountFileableTree`'s result: the synthesized routes plus any warnings raised while mounting -- returned directly rather than pushed into a module-global accumulator (see issue #9: a global meant only build()/resolve()/layout() could be called independently without one call's warnings leaking into the next, unrelated compile()). */
+export interface MountFileableResult {
+  routes: Descriptor[];
+  warnings: string[];
+}
+
+export async function mountFileableTree(tree: FileableTreeLike, path: string): Promise<MountFileableResult> {
   let fileable: FileableModule;
   try {
     // Resolved via this package's `#fileable` internal self-import (see
@@ -161,7 +166,7 @@ export async function mountFileableTree(tree: FileableTreeLike, path: string): P
   const builtRoots = fileable.build(treeForFileable);
   const resolvedRoots = await fileable.resolve(builtRoots, {});
   const laidOut = fileable.layout(resolvedRoots, {});
-  for (const warning of laidOut.warnings) recordWarning(`(mounted fileable tree) ${warning}`);
+  const warnings: string[] = laidOut.warnings.map((warning) => `(mounted fileable tree) ${warning}`);
 
   // Only the SYNTHETIC name (see MOUNT_ROOT_SYNTHETIC_FILE_NAME's own doc
   // comment) is ever stripped -- a real, developer-supplied name on a
@@ -182,7 +187,7 @@ export async function mountFileableTree(tree: FileableTreeLike, path: string): P
     const routePath = `/${stripSyntheticRootName(artifact.outputPath)}`;
 
     if (artifact.target === "zip" || artifact.target === "wbn") {
-      recordWarning(
+      warnings.push(
         `mounted fileable tree: "${artifact.outputPath}" is inside an encode="${artifact.target}" subtree, ` +
           `which isn't mounted yet -- skipped. Build a <Route src>/serveFile() route by hand for a ` +
           `${artifact.target} download.`,
@@ -221,5 +226,5 @@ export async function mountFileableTree(tree: FileableTreeLike, path: string): P
     }
   }
 
-  return routes;
+  return { routes, warnings };
 }
