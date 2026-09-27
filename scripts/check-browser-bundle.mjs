@@ -33,6 +33,13 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+// On Windows, npm's own CLI is `npm.cmd` (a batch shim), and execFileSync
+// doesn't invoke a shell to resolve/run it -- that auto-wrap only happens
+// for exec()/execSync(), not execFile()/execFileSync() (or spawn() without
+// `shell: true`). Resolving the platform-correct name up front, rather than
+// adding `shell: true`, avoids reintroducing shell-quoting concerns for the
+// arg arrays below.
+const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
 
 // Forbidden marker strings in the bundled output: esbuild's default
 // (non-minified) --bundle output includes a "// <relative-path>" banner
@@ -68,7 +75,7 @@ function log(msg) {
 
 function main() {
   log("building (tsc)...");
-  execFileSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
+  execFileSync(npmCmd, ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
 
   const scratchRoot = mkdtempSync(join(tmpdir(), "servable-bundle-check-"));
   const packDir = join(scratchRoot, "pack");
@@ -82,7 +89,7 @@ function main() {
 
   try {
     log("npm pack...");
-    const packOutput = execFileSync("npm", ["pack", "--pack-destination", packDir], {
+    const packOutput = execFileSync(npmCmd, ["pack", "--pack-destination", packDir], {
       cwd: repoRoot,
       encoding: "utf8",
     }).trim();
