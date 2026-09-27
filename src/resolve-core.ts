@@ -49,16 +49,37 @@ export interface ResolveHooks {
   resolveStringHandler(handler: string, baseDir: string, path: string): Promise<unknown>;
 }
 
-export function createResolve(hooks: ResolveHooks): (roots: Descriptor[], options?: CompileOptions) => Promise<Descriptor[]> {
-  return async function resolve(roots: Descriptor[], options: CompileOptions = {}): Promise<Descriptor[]> {
+/**
+ * `resolve()`'s own result: the resolved roots (same array/object identity
+ * as the input, mutated in place -- unchanged from before) plus any
+ * warnings raised while resolving (currently only from mounting a fileable
+ * tree, see mount-fileable.ts). This is a genuinely per-call value, created
+ * fresh inside this function's closure on every invocation -- NOT read from
+ * or written to any module-level state, so calling `resolve()` standalone
+ * any number of times can never leak a warning into a later, unrelated
+ * `compile()` call (see issue #9, where routing these through a
+ * module-global accumulator did exactly that). Warnings are attached as a
+ * non-enumerable extra property on the returned array, rather than
+ * changing the return type to `{ roots, warnings }`, so every existing
+ * caller that treats the result as a plain `Descriptor[]` (passing it
+ * straight into `layout()`, spreading it, iterating it) keeps working
+ * unchanged; a caller that wants the warnings reads `.warnings` directly.
+ */
+export type ResolvedRoots = Descriptor[] & { warnings: string[] };
+
+export function createResolve(hooks: ResolveHooks): (roots: Descriptor[], options?: CompileOptions) => Promise<ResolvedRoots> {
+  return async function resolve(roots: Descriptor[], options: CompileOptions = {}): Promise<ResolvedRoots> {
     const baseDir = options.cwd ?? hooks.defaultBaseDir();
+    // Per-call, not module-global -- see ResolvedRoots' own doc comment above.
+    const warnings: string[] = [];
 
     async function resolveNode(node: Descriptor, path: string): Promise<void> {
       if (node.tag === "group" && node.props.from !== undefined) {
         const fromValue = node.props.from;
         if (isFileableDescriptor(fromValue)) {
           const mounted = await mountFileableTree(fromValue, path);
-          node.children = [...mounted, ...node.children];
+          warnings.push(...mounted.warnings);
+          node.children = [...mounted.routes, ...node.children];
         } else {
           const synthesized = await hooks.resolveGlobFrom(fromValue as string | Promise<string[]> | string[], baseDir, path);
           node.children = [...synthesized, ...node.children];
@@ -102,7 +123,9 @@ export function createResolve(hooks: ResolveHooks): (roots: Descriptor[], option
         const resolvedChildren: DescriptorChild[] = [];
         for (const child of node.children) {
           if (isDescriptor(child) && isFileableDescriptor(child)) {
-            resolvedChildren.push(...(await mountFileableTree(child, childPath)));
+            const mounted = await mountFileableTree(child, childPath);
+            warnings.push(...mounted.warnings);
+            resolvedChildren.push(...mounted.routes);
             continue;
           }
           await resolveChild(child, childPath);
@@ -148,6 +171,7 @@ export function createResolve(hooks: ResolveHooks): (roots: Descriptor[], option
     for (const root of roots) {
       await resolveNode(root, String(root.tag));
     }
-    return roots;
+    Object.defineProperty(roots, "warnings", { value: warnings, enumerable: false, configurable: true });
+    return roots as ResolvedRoots;
   };
 }
