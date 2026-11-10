@@ -17,6 +17,7 @@ it once running.
 | [`06-media-serving/server.tsx`](./06-media-serving/server.tsx) | `src`/`download` on `<Route>`: Range support on by default (206 partial content), `ETag`/`If-None-Match`, `Content-Disposition` -- one mechanism behind video/audio/image/pdf/download serving. |
 | [`07-mount-fileable/server.tsx`](./07-mount-fileable/server.tsx) | A fileable Descriptor tree mounted as a raw child of `<Group>` -- fileable describes the virtual filesystem, servable serves it, zero disk writes in between. |
 | [`08-mount-packfile/server.tsx`](./08-mount-packfile/server.tsx) | Serving a `packfile`-packaged directory through servable: `packfile`'s `createRouter()` already produces the exact `(Request) => Response` shape `Route`'s `handler` prop accepts -- no new servable primitive needed. |
+| [`09-serve-cli/app.tsx`](./09-serve-cli/app.tsx) | A module for the `servable serve` CLI: it only default-exports the compiled app; the CLI owns the port, shutdown, `--watch` reloads and the `--json` event stream. |
 
 ## Running
 

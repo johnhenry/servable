@@ -34,6 +34,12 @@ place they meet.
   - [Fileable descriptors are only recognized under `<Router>`/`<Group>`](#fileable-descriptors-are-only-recognized-under-routergroup)
 - [Adapters](#adapters)
   - [Browser and edge bundling](#browser-and-edge-bundling)
+- [Command line](#command-line)
+  - [Events (`--json`)](#events---json)
+  - [Error and exit codes](#error-and-exit-codes)
+  - [Lifecycle](#lifecycle)
+  - [Behind a proxy](#behind-a-proxy)
+  - [Node's permission model](#nodes-permission-model)
 - [Non-goals](#non-goals)
 - [Examples](#examples)
 - [Family](#family)
@@ -517,8 +523,9 @@ already solves it (multi-value headers like repeated `Set-Cookie`, stream
 error forwarding, the malformed-request-target edge case) -- the same
 "prefer an existing, more mature implementation over reinventing it"
 discipline this whole design leaned on for `Request`/`Response`/
-`Headers`/`URLPattern`. `leserve` is an **optional peer dependency**, only
-needed if you use this adapter.
+`Headers`/`URLPattern`. `leserve` is a regular dependency (it was an
+optional peer before the `servable` CLI, which always needs it), but it's
+still only loaded by this adapter and the CLI, never by the main entry.
 
 ```ts
 import { serve } from "@johnhenry/servable/adapters/node";
@@ -556,13 +563,139 @@ fileable tree's own Node-only capabilities (a local `src=` file path,
 throws its own equivalent, clear `FileableError` for those, pointing back
 at fileable's Node entry point.
 
+## Command line
+
+`servable serve <module>` runs an app without a hand-written server
+script. It's the interface a supervisor (Sitefile Desktop, a process
+manager, a test harness) drives servable through. Node only.
+
+The module default-exports the compiled app and doesn't call `serve()`
+itself:
+
+```tsx
+/** @jsxImportSource @johnhenry/servable */
+import { Router, Route, compile } from "@johnhenry/servable";
+export default await compile(<Router><Route path="/hello">Hello</Route></Router>);
+```
+
+```sh
+npx servable serve dist/app.js --port 0 --json --watch
+```
+
+Point it at JavaScript. Node 26 strips types from `.ts`/`.mts` files, but
+it doesn't transform JSX, so compile `.tsx` first (for example with `tsc`,
+or `tsc --watch` next to `--watch`). See
+[`examples/09-serve-cli`](./examples/09-serve-cli/app.tsx).
+
+| Option | Meaning |
+| --- | --- |
+| `--port <n>` | Port to listen on. `0` lets the OS pick a free one; the `ready` event reports it. Default `$PORT`, else 3000. |
+| `--host <host>` | Interface to bind. Default `127.0.0.1`. |
+| `--json` | NDJSON events on stdout (below). Without it, output is for people. |
+| `--watch` | Re-import the module when a file changes (see "Watch" below). |
+| `--watch-path <dir>` | What to watch; repeatable. Default: the module's directory. |
+| `--public-url <origin>` | The origin clients use, e.g. `http://app.localhost`. Becomes `request.url`'s origin and `Host`. |
+| `--trust-proxy` | Take `request.url`'s origin from `Forwarded`, else `X-Forwarded-Host`/`-Proto`/`-Port`. |
+| `--drain-timeout <ms>` | How long shutdown waits for in-flight requests. Default 10000. |
+
+### Events (`--json`)
+
+With `--json`, stdout carries only events, one JSON object per line, and
+the app's own `console.log`/`info`/`debug` go to stderr. Every event has
+the same envelope:
+
+```json
+{"v":1,"event":"ready","time":"2026-11-10T20:40:29.886Z", ...fields}
+```
+
+`v` is the schema version. It changes only for an incompatible change (a
+field removed or retyped); new fields and new events don't change it, so
+ignore what you don't know.
+
+| Event | Fields | When |
+| --- | --- | --- |
+| `ready` | `url`, `host`, `port`, `publicUrl` (or `null`), `module`, `pid`, `ok`, `reload` | Listening, and after every reload. `port` is the real port, even with `--port 0`. `ok: false` means the module is broken and every request gets a 500 (only under `--watch`). `reload` counts reloads, 0 at start. |
+| `request` | `method`, `host`, `path` (with query), `status`, `ms` | Each response, when its headers are ready. |
+| `reloading` | `files` | `--watch` saw a change. Exactly one `ready` follows. |
+| `warning` | `message`, sometimes `code` | Compile warnings, `E_DRAIN_TIMEOUT`, `E_DRAIN_SKIPPED`, `E_WATCH`. |
+| `error` | `code`, `message`, `fatal`, sometimes `stack`, `permission`, `errno` | `fatal: true` is followed by `stopped` and the exit code below. |
+| `stopping` | `signal` | SIGTERM or SIGINT received; draining. |
+| `stopped` | `exitCode`, `drained` | Last line before the process exits. |
+
+### Error and exit codes
+
+| Exit | Error codes | Meaning |
+| --- | --- | --- |
+| 0 | | Stopped by SIGTERM/SIGINT. |
+| 1 | `E_INTERNAL` | Unexpected error, or an uncaught exception from the app after start. |
+| 2 | `E_USAGE` | Bad command line. |
+| 3 | `E_MODULE_NOT_FOUND`, `E_MODULE_LOAD`, `E_NOT_AN_APP` | The module is missing, threw while loading, or its default export isn't a compiled app. Under `--watch` these aren't fatal: the server starts anyway and serves a 500. |
+| 4 | `E_LISTEN` | Couldn't listen (`errno` says why, e.g. `EADDRINUSE`). |
+| 5 | `E_ACCESS_DENIED` | Node's permission model refused something (`permission` says what). |
+| | `E_REQUEST` | Never fatal: a handler threw and no `<ErrorBoundary>` caught it. The client gets a 500. |
+
+### Lifecycle
+
+- **SIGTERM or SIGINT** stops accepting connections, waits for in-flight
+  requests (up to `--drain-timeout`), then exits 0. A second signal exits
+  at once. On Windows there's no catchable SIGTERM, so a supervisor's kill
+  is immediate.
+- **Watch.** `--watch` re-imports the module in the same process, so the
+  socket and port never change. Files under the watched directories are
+  re-evaluated; packages in `node_modules` aren't. If the new version fails
+  to load, the server answers every request with a 500 showing the error
+  until the next good save. It's a re-import, not a restart: timers or
+  sockets the old version opened at module level keep running, and each
+  reload keeps the old module copies in memory. Restart the process to
+  reset those.
+
+### Behind a proxy
+
+A proxy that keeps the `Host` header (like Sitefile Desktop's `*.localhost`
+name router) needs nothing: `request.url` already has that host, and
+`<Host>` matches it. For a proxy that rewrites `Host`, either pass
+`--public-url` (fixed; forwarded headers are then ignored), or
+`--trust-proxy` to read `Forwarded`/`X-Forwarded-*` per request. Only use
+`--trust-proxy` when the server is reachable through the proxy alone, since
+clients can set those headers themselves. `X-Forwarded-For` isn't used.
+
+### Node's permission model
+
+The CLI runs under `node --permission`. It needs:
+
+- `--allow-fs-read` covering the module, the files it imports, and the
+  `node_modules` holding servable and leserve. Usually that's just the
+  project directory.
+- `--allow-net`, to listen. Node 26 has one network switch, not per host.
+  Without it the CLI exits 5 with `E_ACCESS_DENIED` before trying.
+
+It needs no `--allow-fs-write` and no `--allow-child-process`. `--watch`
+needs nothing extra. Whatever the app itself does (writing files,
+`fetch()` to other hosts, spawning processes) needs its own grants;
+denied calls inside a handler become 500s with an `E_REQUEST` event, and
+denied reads while loading are `E_ACCESS_DENIED`.
+
+```sh
+node --permission --allow-fs-read="$PWD" --allow-net \
+  node_modules/@johnhenry/servable/dist/src/cli.js serve dist/app.js --port 0 --json
+```
+
+Run the project's own servable (`npx servable` or the path above), not a
+global install: the CLI and the app must share one copy of servable for
+trailers to reach the wire.
+
 ## Non-goals
 
 - Not a full HTTP server implementation -- ships a compiler + adapters,
   not a framework with its own server internals beyond the Node bridge.
 - No ORM/templating/sessions. `setCookie()` formats a header value; it is
   not a session store.
-- No hot-reload/watch mode.
+- No hot module replacement. `servable serve --watch` re-imports the app
+  on change; it doesn't push updates to browsers, keep module state across
+  reloads, or tear down what the old version started (see "Lifecycle").
+- The CLI is Node only. Deno, Bun and Workers use their adapters.
+- No process supervision: the CLI doesn't restart itself after a crash or
+  daemonize. That's the supervisor's job; the exit codes are for it.
 - No plugin/middleware-registry system beyond what JSX composition already
   expresses.
 - No built-in proxy or per-route timeout (mechanism already decided for
@@ -605,8 +738,8 @@ outright to do its own job.
 - **[`@johnhenry/leserve`](https://github.com/johnhenry/leserve)** -- the
   Node adapter (`adapters/node`) delegates to leserve's own `serve()`
   rather than maintaining a second `IncomingMessage`/`ServerResponse` ->
-  `Request`/`Response` bridge. `@johnhenry/leserve` is an **optional peer
-  dependency**, only needed by that one adapter.
+  `Request`/`Response` bridge. `@johnhenry/leserve` is a regular
+  dependency, loaded only by that adapter and the `servable` CLI.
 
 ## License
 
