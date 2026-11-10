@@ -18,6 +18,13 @@
  * leserve is a regular dependency on this path (the Node adapter needs it);
  * this file is never imported by the package's main entry, so routing-only
  * consumers still don't load it.
+ *
+ * It's also exported as `@johnhenry/servable/cli` (#17), so a package built
+ * on servable (hostable) runs the same contract instead of a copy: the
+ * `RunHooks` below add error codes, request-error mapping, human renderings
+ * for extra events, and the product strings (label, usage, reload query
+ * parameter, the 500 page's text, the not-an-app hint). Every hook defaults
+ * to servable's own behaviour.
  */
 import { parseArgs } from "node:util";
 import { registerHooks } from "node:module";
@@ -59,10 +66,19 @@ export const ERROR_CODES = {
   E_REQUEST: EXIT.INTERNAL,
 } as const;
 export type ErrorCode = keyof typeof ERROR_CODES;
+/** One of `ERROR_CODES`, or a code an embedder added through `RunHooks.errorCodes`. */
+export type AnyErrorCode = ErrorCode | (string & {});
+
+/** The exit code a fatal error with `code` ends the process with: `extra` first, then `ERROR_CODES`, else `EXIT.INTERNAL`. */
+export function exitCodeFor(code: unknown, extra: Readonly<Record<string, number>> = {}): number {
+  if (typeof code !== "string") return EXIT.INTERNAL;
+  if (Object.hasOwn(extra, code)) return extra[code];
+  return Object.hasOwn(ERROR_CODES, code) ? ERROR_CODES[code as ErrorCode] : EXIT.INTERNAL;
+}
 
 export class CliError extends Error {
   constructor(
-    readonly code: ErrorCode,
+    readonly code: AnyErrorCode,
     message: string,
     readonly details: Record<string, unknown> = {},
   ) {
@@ -86,9 +102,15 @@ const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_DRAIN_MS = 10_000;
 
-export const SERVE_USAGE = `Usage: servable serve <module> [options]
+/**
+ * `serve`'s help text for a program: `serveUsage()` is servable's own
+ * (`SERVE_USAGE`). `compileArgument` is what the help shows inside
+ * `compile(...)`, e.g. `<Gateway>...</Gateway>`.
+ */
+export function serveUsage(program = "servable", compileArgument = "..."): string {
+  return `Usage: ${program} serve <module> [options]
 
-Serve the compiled app a module default-exports (export default await compile(...)).
+Serve the compiled app a module default-exports (export default await compile(${compileArgument})).
 
 Options:
   --port <n>            Port to listen on; 0 picks a free one (default: $PORT or ${DEFAULT_PORT})
@@ -101,6 +123,9 @@ Options:
   --drain-timeout <ms>  How long shutdown waits for in-flight requests (default: ${DEFAULT_DRAIN_MS})
   -h, --help            Show this help
 `;
+}
+
+export const SERVE_USAGE = serveUsage();
 
 /** Parses `serve`'s arguments (everything after the word `serve`). Throws `CliError("E_USAGE")`. */
 export function parseServeArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): ServeOptions | "help" {
@@ -187,10 +212,39 @@ export interface Reporter {
   final(name: string, fields: EventFields, done: () => void): void;
 }
 
-export function createReporter(json: boolean, label = "servable", out: NodeJS.WritableStream = process.stdout, err: NodeJS.WritableStream = process.stderr): Reporter {
+/**
+ * Human (non-`--json`) rendering of one event: the text and which stream
+ * it goes to, or undefined to print nothing. `--json` output never uses it.
+ */
+export type HumanRenderer = (fields: EventFields, label: string) => { to: "stdout" | "stderr"; text: string } | undefined;
+
+export interface ReporterOptions {
+  /** Program name prefixed to human output (default `"servable"`). */
+  label?: string;
+  /** Human renderings for extra events, or overrides for built-in ones, by event name. */
+  renderers?: Readonly<Record<string, HumanRenderer>>;
+  out?: NodeJS.WritableStream;
+  err?: NodeJS.WritableStream;
+}
+
+export function createReporter(
+  json: boolean,
+  labelOrOptions: string | ReporterOptions = "servable",
+  out: NodeJS.WritableStream = process.stdout,
+  err: NodeJS.WritableStream = process.stderr,
+): Reporter {
+  const options: ReporterOptions = typeof labelOrOptions === "string" ? { label: labelOrOptions } : labelOrOptions;
+  const label = options.label ?? "servable";
+  if (options.out) out = options.out;
+  if (options.err) err = options.err;
+  const renderers = options.renderers ?? {};
   const line = (name: string, fields: EventFields): string =>
     JSON.stringify({ v: SCHEMA_VERSION, event: name, time: new Date().toISOString(), ...fields }) + "\n";
   const human = (name: string, fields: EventFields): [NodeJS.WritableStream, string] | undefined => {
+    if (Object.hasOwn(renderers, name)) {
+      const rendered = renderers[name](fields, label);
+      return rendered && [rendered.to === "stdout" ? out : err, rendered.text];
+    }
     switch (name) {
       case "ready":
         return fields.ok === false
@@ -267,11 +321,23 @@ export function classifyLoadError(error: unknown, modulePath: string): CliError 
   return new CliError("E_MODULE_LOAD", `failed to load ${modulePath}: ${e?.message ?? String(error)}`, { stack: e?.stack });
 }
 
+/** The product strings `loadApp()` uses. */
+export interface LoadOptions {
+  /** Query parameter that tags a reload's fresh module copies (default `GENERATION_PARAM`). */
+  reloadParam?: string;
+  /** What `E_NOT_AN_APP` tells the user to write (default `DEFAULT_COMPILE_HINT`). */
+  compileHint?: string;
+}
+
+/** servable's `E_NOT_AN_APP` hint. */
+export const DEFAULT_COMPILE_HINT = "export default await compile(<Router>...</Router>)";
+
 /**
  * Imports `modulePath` and returns its default export as a compiled app.
  * `generation > 0` imports a fresh copy (see `installReloadHooks()`).
  */
-export async function loadApp(modulePath: string, generation = 0): Promise<CompileResult> {
+export async function loadApp(modulePath: string, generation = 0, loadOptions: LoadOptions = {}): Promise<CompileResult> {
+  const reloadParam = loadOptions.reloadParam ?? GENERATION_PARAM;
   try {
     statSync(modulePath);
   } catch (error) {
@@ -280,7 +346,7 @@ export async function loadApp(modulePath: string, generation = 0): Promise<Compi
   let mod: { default?: unknown };
   try {
     const url = pathToFileURL(modulePath);
-    if (generation > 0) url.searchParams.set(GENERATION_PARAM, String(generation));
+    if (generation > 0) url.searchParams.set(reloadParam, String(generation));
     mod = await import(url.href);
   } catch (error) {
     throw classifyLoadError(error, modulePath);
@@ -289,7 +355,7 @@ export async function loadApp(modulePath: string, generation = 0): Promise<Compi
   if (!isCompiledApp(app)) {
     throw new CliError(
       "E_NOT_AN_APP",
-      `the default export of ${modulePath} is ${describeValue(app)}; expected a compiled app -- export default await compile(<Router>...</Router>)`,
+      `the default export of ${modulePath} is ${describeValue(app)}; expected a compiled app -- ${loadOptions.compileHint ?? DEFAULT_COMPILE_HINT}`,
     );
   }
   return app;
@@ -310,7 +376,7 @@ let hooksInstalled = false;
  * not only the entry. Dependencies in node_modules stay shared (so e.g.
  * servable's own trailer WeakMap is the one the adapter reads).
  */
-export function installReloadHooks(roots: string[]): void {
+export function installReloadHooks(roots: string[], reloadParam = GENERATION_PARAM): void {
   if (hooksInstalled) return;
   hooksInstalled = true;
   const rootPrefixes = roots.map((r) => (r.endsWith(sep) ? r : r + sep));
@@ -330,16 +396,16 @@ export function installReloadHooks(roots: string[]): void {
     resolve(specifier, context, nextResolve) {
       const result = nextResolve(specifier, context);
       const parent = context.parentURL;
-      if (!parent || !parent.includes(GENERATION_PARAM)) return result;
+      if (!parent || !parent.includes(reloadParam)) return result;
       let generation: string | null;
       try {
-        generation = new URL(parent).searchParams.get(GENERATION_PARAM);
+        generation = new URL(parent).searchParams.get(reloadParam);
       } catch {
         return result;
       }
       if (!generation || !inScope(result.url)) return result;
       const url = new URL(result.url);
-      url.searchParams.set(GENERATION_PARAM, generation);
+      url.searchParams.set(reloadParam, generation);
       return { ...result, url: url.href };
     },
   });
@@ -436,9 +502,12 @@ export function withOrigin(request: Request, origin: string): Request {
 // ---------------------------------------------------------------------------
 // The server
 
-/** A stand-in app served while the module is broken under `--watch`. */
-export function brokenApp(error: CliError): CompileResult {
-  const body = `servable: the app failed to load\n\n${error.code}: ${error.message}\n${typeof error.details.stack === "string" ? `\n${error.details.stack}\n` : ""}`;
+/** servable's 500-page headline while the module is broken. */
+export const DEFAULT_LOAD_FAILED_MESSAGE = "the app failed to load";
+
+/** A stand-in app served while the module is broken under `--watch`. Its body starts `<label>: <message>`. */
+export function brokenApp(error: CliError, label = "servable", message = DEFAULT_LOAD_FAILED_MESSAGE): CompileResult {
+  const body = `${label}: ${message}\n\n${error.code}: ${error.message}\n${typeof error.details.stack === "string" ? `\n${error.details.stack}\n` : ""}`;
   return {
     warnings: [],
     fetch: async () => new Response(body, { status: 500, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }),
@@ -451,12 +520,29 @@ export function formatUrl(host: string, port: number, protocol = "http:"): strin
 }
 
 export interface RunHooks {
-  /** Program name in human output and the 500 page. */
+  /** Program name in human output and the 500 page (default `"servable"`). */
   label?: string;
-  /** Loads the app (default `loadApp`). hostable passes its own to attach routes. */
+  /** Loads the app (default `loadApp` with `reloadParam` and `compileHint`). */
   load?: (modulePath: string, generation: number) => Promise<CompileResult>;
   /** Called after each successful load, before `ready` -- hostable emits its `routes` event here. */
   afterLoad?: (app: CompileResult, reporter: Reporter) => void | Promise<void>;
+  /**
+   * Turns an error the app's `fetch()` threw into a response, reporting its
+   * own event (hostable: an unreachable `<Upstream url=>` is a 502/504 with
+   * `E_UPSTREAM`). Return undefined for the default: a 500 and a non-fatal
+   * `E_REQUEST` event.
+   */
+  requestError?: (error: unknown, reporter: Reporter) => Response | undefined;
+  /** Extra error codes and the exit code each ends the process with when fatal (see `exitCodeFor()`). */
+  errorCodes?: Readonly<Record<string, number>>;
+  /** Human renderings for extra events (hostable: `routes`), see `createReporter()`. Used by `serveCommand()`. */
+  renderers?: Readonly<Record<string, HumanRenderer>>;
+  /** Query parameter tagging a reload's fresh module copies (default `GENERATION_PARAM`, `servable-reload`). */
+  reloadParam?: string;
+  /** Headline of the 500 page served while the module is broken (default `"the app failed to load"`). */
+  loadFailedMessage?: string;
+  /** What `E_NOT_AN_APP` tells the user to write (default `DEFAULT_COMPILE_HINT`). Used by the default `load`. */
+  compileHint?: string;
 }
 
 /**
@@ -465,7 +551,9 @@ export interface RunHooks {
  * before resolving.
  */
 export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHooks = {}): Promise<number> {
-  const load = hooks.load ?? loadApp;
+  const label = hooks.label ?? "servable";
+  const reloadParam = hooks.reloadParam ?? GENERATION_PARAM;
+  const load = hooks.load ?? ((modulePath: string, generation: number) => loadApp(modulePath, generation, { reloadParam, compileHint: hooks.compileHint }));
   return new Promise<number>((settle) => {
     let app: CompileResult | undefined;
     let ok = false;
@@ -491,7 +579,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
       const fields = errorFields(error, true);
       reporter.event("error", fields);
       abort.abort();
-      finish(ERROR_CODES[fields.code as ErrorCode] ?? EXIT.INTERNAL);
+      finish(exitCodeFor(fields.code, hooks.errorCodes));
     };
 
     function onSignal(signal: NodeJS.Signals) {
@@ -571,7 +659,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
         const cliError = error instanceof CliError ? error : classifyLoadError(error, options.module);
         if (!options.watch) throw cliError;
         reporter.event("error", errorFields(cliError, false));
-        app = brokenApp(cliError);
+        app = brokenApp(cliError, label, hooks.loadFailedMessage);
         ok = false;
         return false;
       }
@@ -587,8 +675,12 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
         try {
           response = await app!.fetch(request);
         } catch (error) {
-          reporter.event("error", { ...errorFields(error, false), code: "E_REQUEST" });
-          response = new Response("Internal Server Error", { status: 500 });
+          const mapped = hooks.requestError?.(error, reporter);
+          if (mapped) response = mapped;
+          else {
+            reporter.event("error", { ...errorFields(error, false), code: "E_REQUEST" });
+            response = new Response("Internal Server Error", { status: 500 });
+          }
         }
         const url = new URL(request.url);
         reporter.event("request", {
@@ -611,7 +703,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
     };
 
     (async () => {
-      if (options.watch) installReloadHooks(options.watchPaths);
+      if (options.watch) installReloadHooks(options.watchPaths, reloadParam);
       await tryLoad();
       if (stopping) return;
       // Node's permission model throws ERR_ACCESS_DENIED asynchronously
@@ -644,7 +736,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
 /** Runs the whole `serve` command from argv; resolves with an exit code. */
 export async function serveCommand(argv: string[], hooks: RunHooks & { usage?: string } = {}): Promise<number> {
   const json = argv.includes("--json");
-  const reporter = createReporter(json, hooks.label);
+  const reporter = createReporter(json, { label: hooks.label, renderers: hooks.renderers });
   let options: ServeOptions | "help";
   try {
     options = parseServeArgs(argv);
@@ -652,7 +744,7 @@ export async function serveCommand(argv: string[], hooks: RunHooks & { usage?: s
     const fields = errorFields(error, true);
     if (!json) process.stderr.write(hooks.usage ?? SERVE_USAGE);
     await new Promise<void>((done) => reporter.final("error", fields, done));
-    return ERROR_CODES[fields.code as ErrorCode] ?? EXIT.INTERNAL;
+    return exitCodeFor(fields.code, hooks.errorCodes);
   }
   if (options === "help") {
     process.stdout.write(hooks.usage ?? SERVE_USAGE);
