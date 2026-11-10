@@ -47,7 +47,10 @@ interface Running {
 }
 
 function run(args: string[], nodeArgs: string[] = []): Running {
-  const child = spawn(process.execPath, [...nodeArgs, cli, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  return wrap(spawn(process.execPath, [...nodeArgs, cli, ...args], { stdio: ["ignore", "pipe", "pipe"] }));
+}
+
+function wrap(child: ChildProcess): Running {
   const events: Event[] = [];
   const stdoutLines: string[] = [];
   let stderr = "";
@@ -438,4 +441,80 @@ test("externalOrigin/withOrigin keep the body, method and leserve's raw request"
   assert.equal(await out.text(), "payload");
   assert.equal((out as Request & { raw?: unknown }).raw, "RAW");
   assert.equal(externalOrigin(new Request("http://h/", { headers: { "x-forwarded-port": "8080" } }), { trustProxy: true }), "http://h:8080");
+});
+
+// #15: an embedder of runServe() (hostable, or a script like this one) --
+// the process doesn't exit when runServe() resolves, so these show what the
+// server itself does, not what process exit hides.
+const serveCliUrl = pathToFileURL(join(distRoot, "src", "serve-cli.js")).href;
+const embedderSource = `import { request } from "node:http";
+import { runServe, createReporter, parseServeArgs } from ${JSON.stringify(serveCliUrl)};
+let uncaught = 0;
+process.on("uncaughtExceptionMonitor", () => uncaught++);
+const [mode, port] = process.argv.slice(2);
+const options = parseServeArgs(["unused.mjs", "--port", port, "--json", "--drain-timeout", "200"]);
+const base = createReporter(true);
+let onReady;
+const readyEvent = new Promise((resolve) => (onReady = resolve));
+const reporter = { event(name, fields) { base.event(name, fields); if (name === "ready") onReady(fields); }, final: base.final };
+const app = { warnings: [], fetch: async () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("x")); } })) };
+const done = runServe(options, reporter, { load: async () => app });
+let how;
+if (mode === "drain") {
+  const ev = await readyEvent;
+  const closed = new Promise((resolve) => {
+    const req = request(ev.url, (res) => {
+      res.once("data", () => process.emit("SIGTERM", "SIGTERM"));
+      res.on("error", () => resolve("closed"));
+      res.on("close", () => resolve("closed"));
+    });
+    req.on("error", () => resolve("closed"));
+    req.end();
+  });
+  await done;
+  how = await Promise.race([closed, new Promise((resolve) => setTimeout(() => resolve("still-open"), 3000))]);
+}
+const code = await done;
+console.log(JSON.stringify({ v: 1, event: "result", code, how, uncaught }));
+process.exit();
+`;
+
+function runEmbedder(args: string[]): Running {
+  const dir = fixtureDir();
+  const script = join(dir, "embedder.mjs");
+  writeFileSync(script, embedderSource);
+  const child = spawn(process.execPath, [script, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const r = wrap(child);
+  r.exit.finally(() => rmSync(dir, { recursive: true, force: true }));
+  return r;
+}
+
+test("#15: a port in use is E_LISTEN through the server's error event, not an uncaught exception", async () => {
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const port = (blocker.address() as { port: number }).port;
+  try {
+    const r = runEmbedder(["listen", String(port)]);
+    const result = await r.waitFor((e) => e.event === "result");
+    assert.equal(result.code, 4);
+    assert.equal(result.uncaught, 0, "no uncaughtException on the listen path");
+    const err = r.events.find((e) => e.event === "error")!;
+    assert.deepEqual([err.code, err.errno, err.fatal], ["E_LISTEN", "EADDRINUSE", true]);
+    assert.equal(err.message, `cannot listen on 127.0.0.1:${port}: listen EADDRINUSE: address already in use 127.0.0.1:${port}`);
+    assert.equal(r.events.at(-2)!.event, "stopped");
+    assert.equal(r.events.at(-2)!.exitCode, 4);
+  } finally {
+    blocker.close();
+  }
+});
+
+test("#15: after the drain timeout, connections still open are force-closed (not left to process exit)", async () => {
+  const r = runEmbedder(["drain", "0"]);
+  const result = await r.waitFor((e) => e.event === "result");
+  assert.equal(result.code, 0);
+  assert.equal(result.how, "closed");
+  assert.equal(result.uncaught, 0);
+  assert.ok(r.events.some((e) => e.event === "warning" && e.code === "E_DRAIN_TIMEOUT"));
+  const stopped = r.events.find((e) => e.event === "stopped")!;
+  assert.deepEqual([stopped.exitCode, stopped.drained], [0, false]);
 });

@@ -529,9 +529,20 @@ still only loaded by this adapter and the CLI, never by the main entry.
 
 ```ts
 import { serve } from "@johnhenry/servable/adapters/node";
-const handle = serve(compiled, { port: 3000, onListen: (info) => console.log(info.path) });
+const handle = serve(compiled, {
+  port: 3000,
+  onListen: (info) => console.log(info.path),
+  // Optional: the server's 'error' events (EADDRINUSE and other listen
+  // failures). Without it, they're uncaught exceptions, as in leserve.
+  onError: (error) => console.error(error.code),
+});
+// handle.server is the underlying http.Server (e.g. closeAllConnections()).
 // later: await handle[Symbol.asyncDispose]();
 ```
+
+leserve's own `serve()` doesn't return its server; the adapter finds it
+through Node's `net.server.listen` diagnostics channel, which fires inside
+`listen()` before any error can be emitted.
 
 ### Browser and edge bundling
 
@@ -637,7 +648,8 @@ ignore what you don't know.
 ### Lifecycle
 
 - **SIGTERM or SIGINT** stops accepting connections, waits for in-flight
-  requests (up to `--drain-timeout`), then exits 0. A second signal exits
+  requests (up to `--drain-timeout`; connections still open then are
+  closed), then exits 0. A second signal exits
   at once. On Windows there's no catchable SIGTERM, so a supervisor's kill
   is immediate.
 - **Watch.** `--watch` re-imports the module in the same process, so the
