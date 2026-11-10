@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (2026-11-10)
 
 ### Added
 - **[#13, #14] `servable serve <module>`: a CLI for running an app under a supervisor (Node only).** The module default-exports its compiled app; the CLI owns the port and lifecycle. `--port` (with `--port 0` for an OS-assigned port), `--host`, `--json` for NDJSON events on stdout (`ready` with the real address, `request`, `reloading`, `warning`, `error`, `stopping`, `stopped`, each with a `v` schema version), stable `E_*` error codes and exit codes (0 clean stop, 1 internal, 2 usage, 3 module, 4 listen, 5 permission denied), graceful SIGTERM/SIGINT shutdown with `--drain-timeout`, `--watch` (in-process re-import keeping the port, a 500 with the error while the module is broken), and `--public-url`/`--trust-proxy` for `Forwarded`/`X-Forwarded-*`. Runs under Node 26's `--permission` with read access to the project and `--allow-net`; nothing else. See README "Command line" and `examples/09-serve-cli`. Tests: `test/serve-cli.test.ts` spawns the real bin.
