@@ -21,12 +21,13 @@ four-stage pipeline (`src/build.ts` -> `resolve.ts` -> `layout.ts` ->
 4. A genuinely fresh clone:
    `git clone . /tmp/servable-verifyN && cd $_ && npm ci && npm run build && npm test`.
    This is the only way to catch "works on my checked-out tree" bugs
-   (missing `files` entries, undeclared deps — `@johnhenry/fileable` and
-   `@johnhenry/leserve` are both optional peer dependencies here; a fresh
-   install without them must still pass the suites that don't exercise
-   mounting/the Node adapter).
+   (missing `files` entries, undeclared deps — `@johnhenry/fileable` is an
+   optional peer dependency here; a fresh install without it must still
+   pass the suites that don't exercise mounting).
 5. Run an example after building: `npm run build && node dist/examples/01-hello-world/server.js`,
    then hit it with `curl` per that example's own header comment.
+   For CLI changes, run `examples/09-serve-cli` through `dist/src/cli.js`
+   (its header comment has the commands, including the `--permission` one).
 6. Commit, push, close the issue with a comment naming the commit SHA.
 
 CI (`.github/workflows/ci.yml`) runs build then test in that order; match it
@@ -34,11 +35,18 @@ locally.
 
 ## Repo-specific gotchas
 
-- **`@johnhenry/fileable` and `leserve` are optional peer dependencies,
-  lazily imported.** Mounting-support code (`from={fileableTree}`, the Node
-  adapter) must not statically `import` either at module top-level — a
-  routing-only consumer that never mounts a fileable tree or uses the Node
-  adapter should never pay the cost of pulling either in.
+- **`@johnhenry/fileable` is an optional peer dependency, lazily
+  imported; `leserve` is a regular dependency but only the Node adapter and
+  the CLI load it.** Mounting-support code (`from={fileableTree}`) must not
+  statically `import` fileable at module top-level, and nothing reachable
+  from the main entry (`src/index.ts`) may import leserve, `adapters/node`
+  or `src/serve-cli.ts` — a routing-only consumer should never pay for
+  either.
+- **The CLI's `--json` stdout is a contract.** Event names, fields, error
+  codes and exit codes are documented in README "Command line" and consumed
+  by Sitefile Desktop. Adding a field or event is fine; removing or
+  retyping one means bumping `SCHEMA_VERSION` in `src/serve-cli.ts`. Keep
+  hostable's CLI on the same envelope.
 - **The governing rule is the actual design constraint, not just prose:
   functions are always props, children are always a static value or nested
   primitives.** A new primitive whose "content" is a function belongs as a
@@ -75,6 +83,7 @@ A change is done when all of the following hold, not just when tests pass:
 See README's "Non-goals": not a full HTTP server implementation, no
 ORM/templating/sessions, no hot-reload, no plugin/middleware-registry
 system beyond JSX composition, no built-in proxy or per-route timeout.
+(`servable serve --watch` re-imports on change; that isn't HMR.)
 
 ## Releases
 
