@@ -38,6 +38,10 @@
       "types": "./dist/src/jsx-dev-runtime.d.ts",
       "default": "./dist/src/jsx-dev-runtime.js"
     },
+    "./cli": {
+      "types": "./dist/src/serve-cli.d.ts",
+      "default": "./dist/src/serve-cli.js"
+    },
     "./adapters/node": {
       "types": "./dist/adapters/node.d.ts",
       "default": "./dist/adapters/node.js"

@@ -45,8 +45,12 @@ locally.
 - **The CLI's `--json` stdout is a contract.** Event names, fields, error
   codes and exit codes are documented in README "Command line" and consumed
   by Sitefile Desktop. Adding a field or event is fine; removing or
-  retyping one means bumping `SCHEMA_VERSION` in `src/serve-cli.ts`. Keep
-  hostable's CLI on the same envelope.
+  retyping one means bumping `SCHEMA_VERSION` in `src/serve-cli.ts`.
+  `src/serve-cli.ts` is also public API, `@johnhenry/servable/cli` (#17):
+  hostable's bin is built on it through `RunHooks` (label, usage, reload
+  parameter, 500 text, compile hint, `requestError`, `errorCodes`,
+  `renderers`). A new hook must default to today's behaviour; renaming or
+  removing an export or hook is a breaking change for hostable.
 - **The governing rule is the actual design constraint, not just prose:
   functions are always props, children are always a static value or nested
   primitives.** A new primitive whose "content" is a function belongs as a

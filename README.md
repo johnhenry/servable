@@ -696,6 +696,47 @@ Run the project's own servable (`npx servable` or the path above), not a
 global install: the CLI and the app must share one copy of servable for
 trailers to reach the wire.
 
+### Embedding the CLI (`@johnhenry/servable/cli`)
+
+The `serve` runtime is exported as `@johnhenry/servable/cli`, so a package
+built on servable can ship its own bin on the same contract (same options,
+envelope, `v`, events, error and exit codes, lifecycle) without copying it.
+hostable's `hostable serve` is built this way. `serveCommand(argv, hooks)`
+runs everything after the word `serve` and resolves with the exit code;
+`runServe(options, reporter, hooks)` and `createReporter()` are the parts.
+Every hook is optional and defaults to servable's own behaviour:
+
+| Hook | Default | What it does |
+| --- | --- | --- |
+| `label` | `"servable"` | Prefix of human output and of the 500 page. |
+| `usage` (`serveCommand` only) | `SERVE_USAGE` | Help text; `serveUsage(program, compileArgument)` builds one with servable's option list. |
+| `reloadParam` | `"servable-reload"` | Query parameter tagging `--watch`'s fresh module copies. |
+| `loadFailedMessage` | `"the app failed to load"` | Headline of the 500 page while the module is broken. |
+| `compileHint` | `export default await compile(<Router>...</Router>)` | What `E_NOT_AN_APP` tells the user to write. |
+| `load` | `loadApp` | Imports the module and checks its default export. |
+| `afterLoad(app, reporter)` | none | Runs after each good load, before `ready` (e.g. to emit an extra event). |
+| `requestError(error, reporter)` | none | Maps an error the app threw to a `Response` (reporting its own event); `undefined` keeps the 500 and `E_REQUEST`. |
+| `errorCodes` | none | Extra `E_*` codes and the exit code each ends with when fatal (`exitCodeFor()`). |
+| `renderers` | none | Human rendering for extra events, by name: `(fields, label) => ({ to: "stdout" \| "stderr", text }) \| undefined`. `--json` output is unaffected. |
+
+```ts
+#!/usr/bin/env node
+import { EXIT, serveCommand, serveUsage } from "@johnhenry/servable/cli";
+process.exitCode = await serveCommand(process.argv.slice(3), {
+  label: "acme",
+  usage: serveUsage("acme", "<Acme>...</Acme>"),
+  reloadParam: "acme-reload",
+  errorCodes: { E_ACME: EXIT.INTERNAL },
+  renderers: { acme: (fields, label) => ({ to: "stdout", text: `${label}: ${fields.note}\n` }) },
+  afterLoad: (app, reporter) => reporter.event("acme", { note: "loaded" }),
+});
+process.exit();
+```
+
+Extra events and codes are additions to schema `v: 1`; an embedder that
+removes or retypes a field has to bump `SCHEMA_VERSION` like servable would.
+It's Node only, and the main entry never imports it.
+
 ## Non-goals
 
 - Not a full HTTP server implementation -- ships a compiler + adapters,

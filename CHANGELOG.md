@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- **[#17] The `serve` runtime is exported as `@johnhenry/servable/cli`** (`exports["./cli"]`, types and default; it's `dist/src/serve-cli.js`). With it come the hooks hostable needs to drop its copy of the file. All are optional, and each defaults to servable's current behaviour, so the `servable` bin's output doesn't change:
+  - `RunHooks.requestError(error, reporter)` maps an error the app threw to a response.
+  - `RunHooks.errorCodes` with `exitCodeFor()` adds error codes.
+  - `RunHooks.renderers`, and `createReporter(json, { label, renderers, out, err })` (the positional form still works), give human renderings for extra events.
+  - `RunHooks.reloadParam`, `loadFailedMessage` and `compileHint`, plus `serveUsage(program, compileArgument)`, set the product strings.
+  - `loadApp()`, `installReloadHooks()` and `brokenApp()` take the matching optional arguments.
+  - `CliError`'s `code` type is widened to accept added codes.
+
+  README "Embedding the CLI" documents it. Tests in `test/serve-cli-hooks.test.ts` cover an embedder bin that sets every hook, and pin servable's defaults.
+
 ### Changed
 - **[#15] `@johnhenry/leserve` is now `^0.1.0`** (was `^0.0.0`). leserve 0.1 writes responses through `@johnhenry/webwire`, and `@johnhenry/leserve/trailers` re-exports webwire's; the Node adapter's trailer bridge is unchanged and a new over-the-wire test (`test/adapters-node.test.ts`) checks trailers still reach the client.
 - **[#15] The CLI gets listen errors from the server's `'error'` event, not `process.on('uncaughtException')`.** Events, codes and exit codes are unchanged (`E_LISTEN`, exit 4, same message and `errno`). The `uncaughtException` handler remains for what the app itself throws.
