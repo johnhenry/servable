@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { createServer, request } from "node:http";
 import { compile } from "../src/compile.js";
 import { serve } from "../adapters/node.js";
-import { ErrorBoundary, Group, Redirect, Route, Router, Use } from "../src/components.js";
+import { ErrorBoundary, Group, Redirect, Response as ResponseTag, Route, Router, Use } from "../src/components.js";
 import { sse, streamBody, upgradeWebSocket } from "../src/api.js";
 
 async function withServer(tree: unknown, run: (base: string) => Promise<void>): Promise<void> {
@@ -191,5 +192,67 @@ test(
     });
   } finally {
     await handle[Symbol.asyncDispose]();
+  }
+});
+
+// #15: leserve 0.1 writes responses through @johnhenry/webwire; the trailer
+// bridge (servable's pendingTrailers -> leserve/trailers) must still reach
+// the wire.
+test("trailers reach the client over real HTTP (leserve 0.1 / webwire bridge)", async () => {
+  const tree = Router({
+    children: Route({
+      path: "/t",
+      method: "GET",
+      children: ResponseTag({
+        trailers: { "x-checksum": "abc123" },
+        children: [new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode("body")); c.close(); } })],
+      }),
+    }),
+  });
+  await withServer(tree, async (base) => {
+    const { body, trailers } = await new Promise<{ body: string; trailers: NodeJS.Dict<string> }>((resolve, reject) => {
+      const req = request(`${base}/t`, { headers: { te: "trailers" } }, (res) => {
+        let text = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (text += d));
+        res.on("end", () => resolve({ body: text, trailers: res.trailers }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(body, "body");
+    assert.equal(trailers["x-checksum"], "abc123");
+  });
+});
+
+test("#15: onError receives a listen error (no uncaught exception) and the handle exposes the server", async () => {
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const port = (blocker.address() as { port: number }).port;
+  let uncaught = 0;
+  const monitor = () => uncaught++;
+  process.on("uncaughtExceptionMonitor", monitor);
+  try {
+    const compiled = await compile(Router({ children: Route({ path: "/", method: "GET", children: ["x"] }) }));
+    const error = await new Promise<NodeJS.ErrnoException>((resolve) => {
+      const handle = serve(compiled, { port, hostname: "127.0.0.1", onError: resolve });
+      assert.ok(handle.server, "handle.server is set synchronously");
+    });
+    assert.equal(error.code, "EADDRINUSE");
+    assert.equal(error.syscall, "listen");
+    assert.equal(uncaught, 0);
+
+    const ac = new AbortController();
+    let listening!: () => void;
+    const onListen = new Promise<void>((resolve) => (listening = resolve));
+    const handle = serve(compiled, { port: 0, hostname: "127.0.0.1", signal: ac.signal, onListen: () => listening() });
+    await onListen;
+    assert.equal((handle.server!.address() as { port: number }).port > 0, true);
+    assert.equal(typeof handle.server!.closeAllConnections, "function");
+    ac.abort();
+    await handle.finished;
+  } finally {
+    process.off("uncaughtExceptionMonitor", monitor);
+    blocker.close();
   }
 });

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- **[#15] `@johnhenry/leserve` is now `^0.1.0`** (was `^0.0.0`). leserve 0.1 writes responses through `@johnhenry/webwire`, and `@johnhenry/leserve/trailers` re-exports webwire's; the Node adapter's trailer bridge is unchanged and a new over-the-wire test (`test/adapters-node.test.ts`) checks trailers still reach the client.
+- **[#15] The CLI gets listen errors from the server's `'error'` event, not `process.on('uncaughtException')`.** Events, codes and exit codes are unchanged (`E_LISTEN`, exit 4, same message and `errno`). The `uncaughtException` handler remains for what the app itself throws.
+- **[#15] After `--drain-timeout`, connections still open are force-closed** (`server.closeAllConnections()`) before `stopped`, rather than left for process exit to cut. Same `E_DRAIN_TIMEOUT` warning and `stopped` `drained: false`; this matters to code that embeds `runServe()` and keeps running.
+
+### Added
+- **[#15] `adapters/node`'s `serve()` takes `onError`** (the server's `'error'` events, listen failures above all) **and its handle has `server`** (the `http.Server`/`https.Server`). leserve 0.1 exposes neither; the adapter gets the server from Node's `net.server.listen` diagnostics channel during the synchronous `listen()` call.
+
 ## 0.1.0 (2026-11-10)
 
 ### Added

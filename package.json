@@ -93,7 +93,7 @@
   ],
   "author": "John Henry",
   "dependencies": {
-    "@johnhenry/leserve": "^0.0.0",
+    "@johnhenry/leserve": "^0.1.0",
     "glob": "^13.0.6",
     "marked": "^18.0.13",
     "urlpattern-polyfill": "^10.0.0"

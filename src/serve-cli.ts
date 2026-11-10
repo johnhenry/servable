@@ -508,6 +508,9 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
       if (!handle) return finish(EXIT.OK, { drained: true });
       const timer = setTimeout(() => {
         reporter.event("warning", { code: "E_DRAIN_TIMEOUT", message: `in-flight requests still open after ${options.drainTimeoutMs}ms; exiting anyway` });
+        // Force-close what's still open, so stopping doesn't depend on the
+        // process exiting (an embedder of runServe() may keep running).
+        handle?.server?.closeAllConnections?.();
         finish(EXIT.OK, { drained: false });
       }, options.drainTimeoutMs);
       timer.unref?.();
@@ -518,7 +521,8 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
       });
     }
 
-    function onUncaught(error: unknown) {
+    /** Classifies a server-side or uncaught error and ends the run with it. */
+    function onFatal(error: unknown) {
       const e = error as { code?: string; syscall?: string; permission?: string; message?: string };
       if (e?.code === "ERR_ACCESS_DENIED") {
         fatal(new CliError("E_ACCESS_DENIED", e.message ?? "permission denied", { permission: e.permission }));
@@ -527,6 +531,12 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
       } else {
         fatal(error);
       }
+    }
+
+    // Listen errors arrive through the adapter's onError (the server's own
+    // 'error' event); this catches what the app itself throws uncaught.
+    function onUncaught(error: unknown) {
+      onFatal(error);
     }
 
     process.on("SIGTERM", onSignal);
@@ -619,6 +629,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
         port: options.port,
         hostname: options.host,
         signal: abort.signal,
+        onError: onFatal,
         onListen: (info) => {
           listening = true;
           port = info.port;
