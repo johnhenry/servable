@@ -6,6 +6,7 @@
  * Run with:
  *   npm run build && node dist/examples/05-streaming/server.js
  * Then:
+ *   curl http://localhost:3004/   # an index of the routes below
  *   curl http://localhost:3004/events        # watch three ticks arrive live
  *   curl http://localhost:3004/download       # a plain streamed body
  */
@@ -28,6 +29,17 @@ async function* chunks() {
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>Streaming</h1>
+      <ul>
+        <li>
+          <a href="/events">/events (server-sent events)</a>
+        </li>
+        <li>
+          <a href="/download">/download (a streamed body)</a>
+        </li>
+      </ul>
+    </Route>
     <Route path="/events" method="GET" handler={() => sse(ticks())} />
     <Route path="/download" method="GET" handler={() => streamBody(chunks(), { headers: { "Content-Type": "text/plain" } })} />
   </Router>

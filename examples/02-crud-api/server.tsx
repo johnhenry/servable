@@ -5,6 +5,7 @@
  * Run with:
  *   npm run build && node dist/examples/02-crud-api/server.js
  * Then:
+ *   curl http://localhost:3001/   # an index of the routes below
  *   curl http://localhost:3001/users
  *   curl -X POST http://localhost:3001/users
  *   curl http://localhost:3001/users/7
@@ -29,6 +30,17 @@ const users: User[] = [{ id: "1", name: "Ada" }, { id: "7", name: "Grace" }];
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>CRUD API</h1>
+      <ul>
+        <li>
+          <a href="/users">GET /users (also POST)</a>
+        </li>
+        <li>
+          <a href="/users/7">/users/:id</a>
+        </li>
+      </ul>
+    </Route>
     <Group prefix="/users">
       {/* A bare array as children flattens (same as any multi-child JSX
           position) rather than serializing as one JSON array -- a handler

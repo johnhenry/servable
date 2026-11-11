@@ -120,10 +120,22 @@ function resolveSymlinkTarget(ownOutputPath: string, symlinkTo: string): string 
  */
 const MOUNT_ROOT_SYNTHETIC_FILE_NAME = "index.html";
 
+/**
+ * Every `<Route>`/`<Redirect>` descriptor synthesized from a mounted
+ * fileable tree, so `describeLayout()` (routes.ts) can report it as
+ * `kind: "mount"` rather than as a hand-written `src=` route.
+ */
+export const mountedDescriptors = new WeakSet<Descriptor>();
+
 /** `mountFileableTree`'s result: the synthesized routes plus any warnings raised while mounting -- returned directly rather than pushed into a module-global accumulator (see issue #9: a global meant only build()/resolve()/layout() could be called independently without one call's warnings leaking into the next, unrelated compile()). */
 export interface MountFileableResult {
   routes: Descriptor[];
   warnings: string[];
+}
+
+function mounted(descriptor: Descriptor): Descriptor {
+  mountedDescriptors.add(descriptor);
+  return descriptor;
 }
 
 export async function mountFileableTree(tree: FileableTreeLike, path: string): Promise<MountFileableResult> {
@@ -197,18 +209,20 @@ export async function mountFileableTree(tree: FileableTreeLike, path: string): P
 
     if (artifact.symlinkTo !== undefined) {
       const targetOutputPath = resolveSymlinkTarget(artifact.outputPath, artifact.symlinkTo);
-      routes.push({
-        tag: "redirect",
-        props: { from: routePath, to: `/${stripSyntheticRootName(targetOutputPath)}`, status: 302 },
-        children: [],
-      });
+      routes.push(
+        mounted({
+          tag: "redirect",
+          props: { from: routePath, to: `/${stripSyntheticRootName(targetOutputPath)}`, status: 302 },
+          children: [],
+        }),
+      );
       continue;
     }
 
     const content = artifact.content ?? "";
     const blobPart = typeof content === "string" ? content : new Uint8Array(content);
     const blob = new Blob([blobPart], { type: inferContentType(artifact.outputPath) });
-    routes.push({ tag: "route", props: { path: routePath, method: "GET", src: blob }, children: [] });
+    routes.push(mounted({ tag: "route", props: { path: routePath, method: "GET", src: blob }, children: [] }));
 
     if (basename(artifact.outputPath) === "index.html") {
       const dirPath = posixDirname(routePath);
@@ -221,7 +235,7 @@ export async function mountFileableTree(tree: FileableTreeLike, path: string): P
       // doesn't need (and can't have) a *separate* "serves its own
       // directory" route -- it already IS that route.
       if (dirPath !== routePath) {
-        routes.push({ tag: "route", props: { path: dirPath, method: "GET", src: blob }, children: [] });
+        routes.push(mounted({ tag: "route", props: { path: dirPath, method: "GET", src: blob }, children: [] }));
       }
     }
   }

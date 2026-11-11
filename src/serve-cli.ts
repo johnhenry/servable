@@ -14,6 +14,8 @@
  *   (a removed or retyped field), never for an added field or event.
  *   The app's own `console.log`/`info`/`debug` go to stderr in this mode.
  * - Stable error codes (`E_*`) and exit codes, see `ERROR_CODES` below.
+ * - A `routes` event after every good load (issue #21), also printed on
+ *   its own by `servable routes <module>` (`routesCommand()`).
  *
  * leserve is a regular dependency on this path (the Node adapter needs it);
  * this file is never imported by the package's main entry, so routing-only
@@ -33,6 +35,7 @@ import { dirname, relative, resolve as resolvePath, sep } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { serve as nodeServe } from "../adapters/node.js";
 import type { CompileResult } from "./types.js";
+import type { RoutesReport } from "./routes.js";
 
 /** Event schema version. Bump only for an incompatible change. */
 export const SCHEMA_VERSION = 1;
@@ -262,6 +265,8 @@ export function createReporter(
         return [err, `${label}: ${fields.signal} received, draining\n`];
       case "stopped":
         return undefined;
+      case "routes":
+        return [out, formatRoutesHuman(fields)];
       default:
         return [err, `${label}: ${name} ${JSON.stringify(fields)}\n`];
     }
@@ -289,6 +294,125 @@ export function errorFields(error: unknown, fatal: boolean): EventFields {
   if (error instanceof CliError) return { code: error.code, message: error.message, fatal, ...error.details };
   const e = error as { message?: string; stack?: string } | undefined;
   return { code: "E_INTERNAL", message: e?.message ?? String(error), fatal, stack: e?.stack };
+}
+
+// ---------------------------------------------------------------------------
+// Routes (issue #21): the `routes` event and the `routes` command.
+
+/**
+ * Human rendering of a `routes` event: one line per host, its routes
+ * indented (`GET,POST /users/:id`, `* /old -> /new`), then any backends.
+ * The same text `hostable routes` has printed since its 0.1.
+ */
+export function formatRoutesHuman(fields: EventFields): string {
+  const hosts = (fields.hosts ?? []) as { hostname: string; routes: { path: string; methods: string[]; redirect?: string }[] }[];
+  const lines: string[] = [];
+  for (const host of hosts) {
+    lines.push(host.hostname === "*" ? "(any host)" : host.hostname);
+    for (const r of host.routes) lines.push(`  ${r.methods.join(",").padEnd(8)} ${r.path}${r.redirect ? ` -> ${r.redirect}` : ""}`);
+  }
+  const backends = (fields.backends ?? []) as { hostname: string; path: string; url: string }[];
+  if (backends.length) {
+    lines.push("backends:");
+    for (const b of backends) lines.push(`  ${b.hostname === "*" ? "" : b.hostname}${b.path} -> ${b.url}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/** `E_ROUTES_UNKNOWN`'s message when the app has no `describeRoutes()`. */
+export const DEFAULT_ROUTES_UNKNOWN_MESSAGE =
+  "the default export has no describeRoutes() (it wasn't made by @johnhenry/servable >= 0.3's compile()), so its routes can't be listed";
+
+/**
+ * The `routes` event's fields: the app's `describeRoutes()` report plus
+ * `complete` (false, with empty `hosts`/`backends`, when the app can't
+ * describe itself or describing threw). With a `reporter`, that case is
+ * also a non-fatal `E_ROUTES_UNKNOWN` warning.
+ */
+export async function routesFields(app: CompileResult, reporter?: Reporter, unknownMessage = DEFAULT_ROUTES_UNKNOWN_MESSAGE): Promise<EventFields> {
+  const describe = (app as { describeRoutes?: () => Promise<RoutesReport> }).describeRoutes;
+  if (typeof describe !== "function") {
+    reporter?.event("warning", { code: "E_ROUTES_UNKNOWN", message: unknownMessage });
+    return { hosts: [], backends: [], complete: false };
+  }
+  try {
+    return { ...(await describe.call(app)), complete: true };
+  } catch (error) {
+    reporter?.event("warning", { code: "E_ROUTES_UNKNOWN", message: `couldn't list routes: ${(error as Error).message}` });
+    return { hosts: [], backends: [], complete: false };
+  }
+}
+
+/** `routes`' help text for a program. */
+export function routesUsage(program = "servable", what = "the routes of the app a module default-exports"): string {
+  return `Usage: ${program} routes <module> [--json]
+
+Print ${what}, without serving it.
+
+Options:
+  --json       One NDJSON \`routes\` event on stdout (the same event \`serve --json\` emits)
+  -h, --help   Show this help
+`;
+}
+
+export const ROUTES_USAGE = routesUsage();
+
+/** Hooks for `routesCommand()`; each defaults to servable's own. */
+export interface RoutesCommandHooks {
+  /** Program name in human output (default `"servable"`). */
+  label?: string;
+  /** Help text (default `ROUTES_USAGE`). */
+  usage?: string;
+  /** Loads the app (default `loadApp` with `reloadParam` and `compileHint`). */
+  load?: (modulePath: string) => Promise<CompileResult>;
+  reloadParam?: string;
+  compileHint?: string;
+  /** Extra error codes, as for `RunHooks.errorCodes`. */
+  errorCodes?: Readonly<Record<string, number>>;
+  /** Human renderings, as for `RunHooks.renderers` (default renders `routes` with `formatRoutesHuman()`). */
+  renderers?: Readonly<Record<string, HumanRenderer>>;
+  /** `E_ROUTES_UNKNOWN`'s message when the app has no `describeRoutes()`. */
+  routesUnknownMessage?: string;
+}
+
+/**
+ * Runs the whole `routes` command from argv (everything after the word
+ * `routes`): loads the module, prints its routes, exits. Resolves with an
+ * exit code: 0, or the load error's (same codes as `serve`).
+ */
+export async function routesCommand(argv: string[], hooks: RoutesCommandHooks = {}): Promise<number> {
+  const json = argv.includes("--json");
+  const usage = hooks.usage ?? ROUTES_USAGE;
+  const reporter = createReporter(json, { label: hooks.label, renderers: hooks.renderers });
+  const end = (name: string, fields: EventFields) => new Promise<void>((done) => reporter.final(name, fields, done));
+  let modulePath: string;
+  try {
+    const parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, options: { json: { type: "boolean" }, help: { type: "boolean", short: "h" } } });
+    if (parsed.values.help) {
+      process.stdout.write(usage);
+      return EXIT.OK;
+    }
+    if (parsed.positionals.length !== 1) {
+      throw new CliError("E_USAGE", parsed.positionals.length === 0 ? "missing <module>" : `expected one <module>, got ${parsed.positionals.length}`);
+    }
+    modulePath = resolvePath(parsed.positionals[0]);
+  } catch (error) {
+    const err = error instanceof CliError ? error : new CliError("E_USAGE", (error as Error).message);
+    if (!json) process.stderr.write(usage);
+    await end("error", errorFields(err, true));
+    return EXIT.USAGE;
+  }
+  if (json) redirectConsoleToStderr();
+  const load = hooks.load ?? ((path: string) => loadApp(path, 0, { reloadParam: hooks.reloadParam, compileHint: hooks.compileHint }));
+  try {
+    const app = await load(modulePath);
+    await end("routes", await routesFields(app, reporter, hooks.routesUnknownMessage));
+    return EXIT.OK;
+  } catch (error) {
+    const fields = errorFields(error instanceof CliError ? error : classifyLoadError(error, modulePath), true);
+    await end("error", fields);
+    return exitCodeFor(fields.code, hooks.errorCodes);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +648,12 @@ export interface RunHooks {
   label?: string;
   /** Loads the app (default `loadApp` with `reloadParam` and `compileHint`). */
   load?: (modulePath: string, generation: number) => Promise<CompileResult>;
-  /** Called after each successful load, before `ready` -- hostable emits its `routes` event here. */
+  /**
+   * Called after each successful load, before `ready`. The default emits
+   * the `routes` event (`routesFields(app)`, no warning when the app can't
+   * describe itself: just `complete: false`). An embedder that sets this
+   * replaces that default (hostable emits its own `routes` event here).
+   */
   afterLoad?: (app: CompileResult, reporter: Reporter) => void | Promise<void>;
   /**
    * Turns an error the app's `fetch()` threw into a response, reporting its
@@ -543,6 +672,11 @@ export interface RunHooks {
   loadFailedMessage?: string;
   /** What `E_NOT_AN_APP` tells the user to write (default `DEFAULT_COMPILE_HINT`). Used by the default `load`. */
   compileHint?: string;
+}
+
+/** `RunHooks.afterLoad`'s default: the `routes` event, after every good load. */
+export async function emitRoutes(app: CompileResult, reporter: Reporter): Promise<void> {
+  reporter.event("routes", await routesFields(app));
 }
 
 /**
@@ -650,7 +784,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
     const tryLoad = async (): Promise<boolean> => {
       try {
         const loaded = await load(options.module, generation);
-        await hooks.afterLoad?.(loaded, reporter);
+        await (hooks.afterLoad ?? emitRoutes)(loaded, reporter);
         publish(loaded);
         app = loaded;
         ok = true;
@@ -736,7 +870,9 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
 /** Runs the whole `serve` command from argv; resolves with an exit code. */
 export async function serveCommand(argv: string[], hooks: RunHooks & { usage?: string } = {}): Promise<number> {
   const json = argv.includes("--json");
-  const reporter = createReporter(json, { label: hooks.label, renderers: hooks.renderers });
+  // Human `serve` output doesn't list routes (that's `routes`' job, and
+  // the request log reads better without it); `--json` always has the event.
+  const reporter = createReporter(json, { label: hooks.label, renderers: { routes: () => undefined, ...hooks.renderers } });
   let options: ServeOptions | "help";
   try {
     options = parseServeArgs(argv);

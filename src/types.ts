@@ -5,6 +5,7 @@
  * an HTTP dispatcher instead of a filesystem tree.
  */
 import type { URLPatternInstance } from "./urlpattern.js";
+import type { RoutesReport } from "./routes.js";
 
 export const FRAGMENT: unique symbol = Symbol.for("servable.fragment");
 
@@ -293,4 +294,12 @@ export interface CompileOptions {
 export interface CompileResult {
   fetch: (req: Request) => Promise<Response>;
   warnings: string[];
+  /**
+   * What the app answers (issue #21): routes by host, each with its
+   * methods, kind and Group prefix, plus whether a `<NotFound>` exists.
+   * Non-enumerable on what `compile()` returns, and optional here, since a
+   * hand-made `{ fetch, warnings }` won't have it. It reads the table
+   * `compile()` already built, so it's cheap.
+   */
+  describeRoutes?(): Promise<RoutesReport>;
 }

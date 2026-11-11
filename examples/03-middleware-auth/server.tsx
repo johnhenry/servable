@@ -5,6 +5,7 @@
  * Run with:
  *   npm run build && node dist/examples/03-middleware-auth/server.js
  * Then:
+ *   curl http://localhost:3002/   # an index of the routes below
  *   curl http://localhost:3002/public
  *   curl http://localhost:3002/admin/dashboard            # 401, no token
  *   curl -H "Authorization: Bearer secret" http://localhost:3002/admin/dashboard
@@ -31,6 +32,17 @@ const logTiming: Middleware = async (req, ctx, next) => {
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>Middleware and auth</h1>
+      <ul>
+        <li>
+          <a href="/public">/public</a>
+        </li>
+        <li>
+          <a href="/admin/dashboard">/admin/dashboard (needs Authorization: Bearer secret)</a>
+        </li>
+      </ul>
+    </Route>
     <Route path="/public" method="GET">
       anyone can see this
     </Route>
