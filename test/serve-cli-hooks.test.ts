@@ -20,6 +20,8 @@ import {
   brokenApp,
   createReporter,
   exitCodeFor,
+  formatRoutesHuman,
+  routesUsage,
   serveUsage,
 } from "../src/serve-cli.js";
 
@@ -129,6 +131,8 @@ test("#17 hooks, --json: afterLoad event, requestError mapping (and the default 
     const url = await p.url();
     const names = p.events().map((e) => e.event);
     assert.ok(names.indexOf("custom") >= 0 && names.indexOf("custom") < names.indexOf("ready"), names.join(","));
+    // #21: an embedder's afterLoad replaces the default `routes` event.
+    assert.ok(!names.includes("routes"), names.join(","));
     const mapped = await fetch(`${url}upstream`);
     assert.deepEqual([mapped.status, await mapped.text()], [502, "Bad Gateway"]);
     const boom = await fetch(`${url}boom`);
@@ -275,4 +279,54 @@ test("#17 createReporter: renderers add or override human output only; exitCodeF
   assert.equal(exitCodeFor("toString"), EXIT.INTERNAL);
   assert.equal(exitCodeFor(undefined), EXIT.INTERNAL);
   for (const [code, exit] of Object.entries(ERROR_CODES)) assert.equal(exitCodeFor(code), exit);
+});
+
+test("#21 routes: the default human rendering, and routesCommand() with an embedder's hooks", async () => {
+  const fields = {
+    hosts: [
+      { hostname: "*", routes: [{ path: "/", methods: ["GET", "HEAD"] }, { path: "/old", methods: ["*"], redirect: "/" }] },
+      { hostname: "a.localhost", routes: [{ path: "/a", methods: ["POST"] }] },
+    ],
+    backends: [{ hostname: "*", path: "/api/*", url: "http://127.0.0.1:9/" }],
+  };
+  const text = "(any host)\n  GET,HEAD /\n  *        /old -> /\na.localhost\n  POST     /a\nbackends:\n  /api/* -> http://127.0.0.1:9/\n";
+  assert.equal(formatRoutesHuman(fields), text);
+  const out = new PassThrough();
+  let written = "";
+  out.setEncoding("utf8").on("data", (d: string) => (written += d));
+  createReporter(false, { out, err: out }).event("routes", fields);
+  assert.equal(written, text);
+  assert.match(routesUsage("acme", "the acme routes"), /^Usage: acme routes <module> \[--json\]\n\nPrint the acme routes, without serving it\.\n/);
+
+  const { dir, mod } = setup();
+  const bin = join(dir, "acme-routes.mjs");
+  writeFileSync(
+    bin,
+    `import { routesCommand } from "@johnhenry/servable/cli";
+process.exitCode = await routesCommand(process.argv.slice(2), {
+  label: "acme",
+  usage: "acme usage\\n",
+  routesUnknownMessage: "not an acme app",
+  renderers: { routes: (f) => ({ to: "stdout", text: "acme " + f.hosts.length + "\\n" }) },
+});
+process.exit();
+`,
+  );
+  const handMade = join(dir, "hand.mjs");
+  writeFileSync(handMade, `export default { fetch: async () => new Response(""), warnings: [] };\n`);
+  const run = (args: string[]) => {
+    const p = start(bin, args);
+    return p.exit.then((code) => ({ code, stdout: p.stdout(), stderr: p.stderr() }));
+  };
+  try {
+    assert.deepEqual(await run([mod]), { code: 0, stdout: "acme 1\n", stderr: "" });
+    const unknown = await run([handMade]);
+    assert.equal(unknown.stdout, "acme 0\n");
+    assert.equal(unknown.stderr, "acme: warning: not an acme app\n");
+    const usage = await run([]);
+    assert.equal(usage.code, 2);
+    assert.equal(usage.stderr, "acme usage\nacme: error E_USAGE: missing <module>\n");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

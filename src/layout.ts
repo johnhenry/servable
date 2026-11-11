@@ -64,6 +64,10 @@ export interface CompiledRoute {
   chain: WrapperFrame[];
   headersLayers: HeadersInputOrFn[];
   trailers?: TrailersInputOrFn;
+  /** The joined `<Group>` prefix this route sits under (`""` for none). Read by `describeLayout()`. */
+  prefix: string;
+  /** The canonical path (what `linkTo()` returns), or the URLPattern's own pathname for a URLPattern `path`. Read by `describeLayout()`. */
+  path: string;
 }
 
 export interface CompiledRedirect {
@@ -71,6 +75,10 @@ export interface CompiledRedirect {
   to: string;
   status: number;
   chain: WrapperFrame[];
+  /** The joined `<Group>` prefix (`""` for none) and the full `from` path. Read by `describeLayout()`. */
+  prefix: string;
+  from: string;
+  descriptor: Descriptor;
 }
 
 export interface CompiledScope {
@@ -202,11 +210,15 @@ export function layout(roots: Descriptor[]): LayoutResult {
         // by default -- except an absolute http(s):// URL, which obviously
         // isn't meant to be joined with a local path prefix.
         const resolvedTo = /^https?:\/\//.test(to) ? to : joinPath(ctx.basePath, to);
+        const fromPath = joinPath(ctx.basePath, from);
         redirects.push({
-          pattern: compilePath(joinPath(ctx.basePath, from), ctx.hostname),
+          pattern: compilePath(fromPath, ctx.hostname),
           to: resolvedTo,
           status: (node.props.status as number | undefined) ?? 301,
           chain: ctx.chain,
+          prefix: ctx.basePath,
+          from: fromPath,
+          descriptor: node,
         });
         return;
       }
@@ -270,6 +282,8 @@ export function layout(roots: Descriptor[]): LayoutResult {
       chain: ctx.chain,
       headersLayers,
       trailers: node.props.trailers as TrailersInputOrFn | undefined,
+      prefix: ctx.basePath,
+      path: typeof finalPath === "string" ? finalPath : finalPath.pathname,
     });
 
     if (typeof finalPath === "string") linkTargets.set(node, finalPath);

@@ -7,6 +7,7 @@
  * Run with:
  *   npm run build && node dist/examples/04-file-based-routing/server.js
  * Then:
+ *   curl http://localhost:3003/   # an index of the routes below
  *   curl http://localhost:3003/api/index
  *   curl http://localhost:3003/api/users/list
  *   curl -X POST http://localhost:3003/api/users/list
@@ -14,7 +15,7 @@
 /** @jsxImportSource @johnhenry/servable */
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Router, Group, compile } from "@johnhenry/servable";
+import { Router, Group, Route, compile } from "@johnhenry/servable";
 import { serve } from "@johnhenry/servable/adapters/node";
 
 // Absolute glob pattern computed from this (compiled) file's own location,
@@ -26,6 +27,17 @@ const pattern = join(here, "handlers/**/*.js");
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>File-based routing</h1>
+      <ul>
+        <li>
+          <a href="/api/index">/api/index</a>
+        </li>
+        <li>
+          <a href="/api/users/list">/api/users/list</a>
+        </li>
+      </ul>
+    </Route>
     <Group prefix="/api" from={pattern} />
   </Router>
 );

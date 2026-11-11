@@ -40,6 +40,8 @@ place they meet.
   - [Lifecycle](#lifecycle)
   - [Behind a proxy](#behind-a-proxy)
   - [Node's permission model](#nodes-permission-model)
+  - [Listing routes](#listing-routes)
+  - [Embedding the CLI (`@johnhenry/servable/cli`)](#embedding-the-cli-johnhenryservablecli)
 - [Non-goals](#non-goals)
 - [Examples](#examples)
 - [Family](#family)
@@ -625,10 +627,11 @@ ignore what you don't know.
 
 | Event | Fields | When |
 | --- | --- | --- |
+| `routes` | `hosts`, `backends`, `notFound`, `complete` | After each good load, before its `ready`: at start and after every successful reload. A failed reload sends none (the last one still describes nothing being served; `ready` says `ok: false`). See "Listing routes" below. |
 | `ready` | `url`, `host`, `port`, `publicUrl` (or `null`), `module`, `pid`, `ok`, `reload` | Listening, and after every reload. `port` is the real port, even with `--port 0`. `ok: false` means the module is broken and every request gets a 500 (only under `--watch`). `reload` counts reloads, 0 at start. |
 | `request` | `method`, `host`, `path` (with query), `status`, `ms` | Each response, when its headers are ready. |
-| `reloading` | `files` | `--watch` saw a change. Exactly one `ready` follows. |
-| `warning` | `message`, sometimes `code` | Compile warnings, `E_DRAIN_TIMEOUT`, `E_DRAIN_SKIPPED`, `E_WATCH`. |
+| `reloading` | `files` | `--watch` saw a change. Exactly one `ready` follows (after a `routes`, if the new version loaded). |
+| `warning` | `message`, sometimes `code` | Compile warnings, `E_DRAIN_TIMEOUT`, `E_DRAIN_SKIPPED`, `E_WATCH`, `E_ROUTES_UNKNOWN` (`servable routes` only). |
 | `error` | `code`, `message`, `fatal`, sometimes `stack`, `permission`, `errno` | `fatal: true` is followed by `stopped` and the exit code below. |
 | `stopping` | `signal` | SIGTERM or SIGINT received; draining. |
 | `stopped` | `exitCode`, `drained` | Last line before the process exits. |
@@ -696,6 +699,63 @@ Run the project's own servable (`npx servable` or the path above), not a
 global install: the CLI and the app must share one copy of servable for
 trailers to reach the wire.
 
+### Listing routes
+
+`servable routes <module> [--json]` loads the module like `serve` does
+and prints what the app answers, without listening. With `--json` it
+prints one `routes` event, the same one `serve --json` emits; load errors
+are the same `error` events and exit codes as `serve`'s (exit 0
+otherwise).
+
+```sh
+$ npx servable routes dist/app.js
+(any host)
+  GET      /
+  GET,DELETE /api/users/:id
+  *        /old -> /
+```
+
+The event, from an app with a `<Group prefix="/api">` holding a
+`<NotFound>`:
+
+```json
+{"v":1,"event":"routes","time":"2026-11-11T06:43:57.910Z",
+ "hosts":[{"hostname":"*","pattern":true,
+   "routes":[
+     {"path":"/","methods":["GET"],"kind":"static","params":[],"hasParams":false,"prefix":""},
+     {"path":"/api/users/:id","methods":["GET","DELETE"],"kind":"handler","params":["id"],"hasParams":true,"prefix":"/api"},
+     {"path":"/old","methods":["*"],"kind":"redirect","params":[],"hasParams":false,"prefix":"","redirect":"/","status":301}],
+   "notFoundPrefixes":["/api"]}],
+ "backends":[],"notFound":true,"complete":true}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `hosts[]` | One per `<Host>` (by `name` or `pattern`), plus `hostname: "*"` for routes outside any `<Host>`. `pattern` is true when `hostname` isn't one literal name. |
+| `hosts[].routes[]` | In match order. Methods of the same path and kind are merged into one entry. |
+| `.path` | URLPattern pathname syntax, Group prefixes included. A Group's own `path="/"` route is listed at the prefix (`/api`), though `/api/` matches too. |
+| `.methods` | Upper-case methods; `["*"]` for a redirect, which answers any method. |
+| `.kind` | `handler` (a `handler=` function, including `Group from="glob"` modules), `static` (static children), `src` (a `src=` file, URL or Blob), `redirect` (with `redirect`, its target, and `status`), or `mount` (a file of a mounted fileable tree; a mounted symlink is a `redirect` with `mounted: true`). |
+| `.params`, `.hasParams` | Named parameters, and whether the path is a pattern rather than one URL (parameters, `*`, regexp groups). A UI can link straight to a route when `hasParams` is false. |
+| `.prefix` | The joined `<Group>` prefix the route sits under, `""` for none. |
+| `hosts[].notFoundPrefixes` | Prefixes under that host with their own `<NotFound>` (`"/"` for the root). |
+| `notFound` | Whether any `<NotFound>` exists. If not, unmatched requests get a plain `404 Not Found`. |
+| `backends` | Always `[]` here. hostable's `routes` event is this same structure and lists its `<Upstream url=>` backends in it. |
+| `complete` | `false` when the app can't describe itself (its default export wasn't made by servable >= 0.3's `compile()`, e.g. a hand-made `{ fetch }`); `hosts` is then empty. `servable routes` also warns `E_ROUTES_UNKNOWN`; `serve` doesn't. |
+
+The same report is available in code: a compiled app has a non-enumerable
+`describeRoutes()` (it reads the table `compile()` built, so it's cheap),
+and the main entry exports `describeRoutes(tree, options)` (runs Build,
+Resolve and Layout on a copy) and `describeLayout(layout(...))`, with the
+`RoutesReport`, `HostEntry`, `RouteEntry`, `RouteKind` and `BackendEntry`
+types.
+
+It lists routes, not every URL: a `handler` that answers sub-paths itself
+(`Route path="/mem/*"`) shows as one pattern, query strings and request
+headers aren't modelled, and middleware that rejects a request (`<Use>`
+returning a 401) isn't visible. Human `serve` output doesn't print the
+list; use `servable routes`, or `--json`.
+
 ### Embedding the CLI (`@johnhenry/servable/cli`)
 
 The `serve` runtime is exported as `@johnhenry/servable/cli`, so a package
@@ -704,7 +764,12 @@ envelope, `v`, events, error and exit codes, lifecycle) without copying it.
 hostable's `hostable serve` is built this way. `serveCommand(argv, hooks)`
 runs everything after the word `serve` and resolves with the exit code;
 `runServe(options, reporter, hooks)` and `createReporter()` are the parts.
-Every hook is optional and defaults to servable's own behaviour:
+`routesCommand(argv, hooks)` is `servable routes` the same way (hooks
+`label`, `usage` with `routesUsage(program, what)`, `load`, `reloadParam`,
+`compileHint`, `errorCodes`, `renderers`, `routesUnknownMessage`), and
+`routesFields(app, reporter?)` and `formatRoutesHuman(fields)` build and
+render the event. Every hook is optional and defaults to servable's own
+behaviour:
 
 | Hook | Default | What it does |
 | --- | --- | --- |
@@ -714,10 +779,10 @@ Every hook is optional and defaults to servable's own behaviour:
 | `loadFailedMessage` | `"the app failed to load"` | Headline of the 500 page while the module is broken. |
 | `compileHint` | `export default await compile(<Router>...</Router>)` | What `E_NOT_AN_APP` tells the user to write. |
 | `load` | `loadApp` | Imports the module and checks its default export. |
-| `afterLoad(app, reporter)` | none | Runs after each good load, before `ready` (e.g. to emit an extra event). |
+| `afterLoad(app, reporter)` | `emitRoutes`: the `routes` event | Runs after each good load, before `ready` (e.g. to emit an extra event). Setting it replaces the default, so call `emitRoutes(app, reporter)` too to keep the `routes` event. |
 | `requestError(error, reporter)` | none | Maps an error the app threw to a `Response` (reporting its own event); `undefined` keeps the 500 and `E_REQUEST`. |
 | `errorCodes` | none | Extra `E_*` codes and the exit code each ends with when fatal (`exitCodeFor()`). |
-| `renderers` | none | Human rendering for extra events, by name: `(fields, label) => ({ to: "stdout" \| "stderr", text }) \| undefined`. `--json` output is unaffected. |
+| `renderers` | `routes` silent in `serve` | Human rendering for extra events, by name: `(fields, label) => ({ to: "stdout" \| "stderr", text }) \| undefined`. `--json` output is unaffected. `createReporter()` renders `routes` with `formatRoutesHuman()`; `serveCommand()` silences it unless `renderers.routes` is given. |
 
 ```ts
 #!/usr/bin/env node
@@ -763,7 +828,9 @@ See [`examples/`](./examples) (and its own
 `03-middleware-auth` (`Use`/`ErrorBoundary` composition),
 `04-file-based-routing` (`Group from="glob"`), `05-streaming`
 (`sse()`/`streamBody()`), `06-media-serving` (`src`/`download`/Range),
-`07-mount-fileable`, `08-mount-packfile`.
+`07-mount-fileable`, `08-mount-packfile`, `09-serve-cli` (a module for
+`servable serve`). Each answers `/` with an index page linking to its
+other routes.
 
 ## Family
 

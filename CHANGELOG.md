@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **[#21] Routes as data: a `routes` event on `servable serve --json` and a `servable routes <module> [--json]` command.** A supervisor (Sitefile Desktop) can now show which paths an app answers instead of opening `/` into a 404.
+  - `serve --json` emits `routes` after every good load, before that load's `ready`: at start and after each successful `--watch` reload (a failed reload emits none).
+  - The event's fields are `hosts` (each `{ hostname, pattern, routes, notFoundPrefixes }`), `backends` (always `[]` for servable), `notFound` and `complete`. Each route has `path`, `methods`, `kind` (`handler`/`static`/`src`/`redirect`/`mount`), `params`, `hasParams` and `prefix` (the Group prefix applied), plus `redirect` and `status` for redirects. A mounted fileable tree's files are listed one by one as `kind: "mount"`.
+  - It's hostable's `routes` structure (`hosts[].routes[]` with `path`/`methods`/`redirect`, `backends`, `complete`) with fields added, so a gateway's routes and an app's read the same way.
+  - `servable routes` prints the same event without listening (or a host-by-host list for people); load errors and exit codes are `serve`'s. `complete: false` (with an `E_ROUTES_UNKNOWN` warning from `routes`) when the default export has no `describeRoutes()`.
+  - In code: `compile()`'s result has a non-enumerable `describeRoutes()` that reads the table it already built (`Object.keys(app)` is still `["fetch", "warnings"]`), and the main entry exports `describeRoutes(tree, options)`, `describeLayout(layoutResult)` and the `RoutesReport`/`HostEntry`/`RouteEntry`/`RouteKind`/`BackendEntry` types. `CompileResult` gains an optional `describeRoutes`.
+  - `@johnhenry/servable/cli` gains `routesCommand(argv, hooks)`, `routesUsage()`/`ROUTES_USAGE`, `routesFields()`, `formatRoutesHuman()`, `emitRoutes()` and `DEFAULT_ROUTES_UNKNOWN_MESSAGE`, so hostable can drop its own copies.
+  - Schema stays `v: 1` (a new event). Human `serve` output is unchanged: it doesn't print the list. `RunHooks.afterLoad` now defaults to `emitRoutes`; an embedder that sets it (hostable) replaces that default, so its output is unchanged too.
+  - Tests: `test/routes.test.ts`, and the CLI cases in `test/serve-cli.test.ts` and `test/serve-cli-hooks.test.ts` (including `--watch` re-emitting after a reload).
+- **[#21] Every example answers `/`** with an index page linking to its other routes.
+
 ## 0.2.0 (2026-11-10)
 
 ### Added

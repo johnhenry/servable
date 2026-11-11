@@ -5,7 +5,8 @@ dispatcher started via the Node adapter. They compile alongside `src/`/
 `adapters/` (see `tsconfig.json`'s `include`), so `npm run build`
 typechecks every example against the current API. Every file's own header
 comment states its exact run command and a few `curl` calls to try against
-it once running.
+it once running. Every example answers `/` with a small index page linking
+to its other routes, so opening the root in a browser lands somewhere.
 
 | Example | Demonstrates |
 | --- | --- |

@@ -1,22 +1,24 @@
 #!/usr/bin/env node
 /**
- * The `servable` executable. One command today: `serve` (see serve-cli.ts
- * for the contract and README "Command line" for the documentation).
+ * The `servable` executable: `serve` and `routes` (see serve-cli.ts for the
+ * contract and README "Command line" for the documentation).
  */
 import { readFileSync } from "node:fs";
-import { CliError, EXIT, createReporter, errorFields, serveCommand } from "./serve-cli.js";
+import { CliError, EXIT, createReporter, errorFields, routesCommand, serveCommand } from "./serve-cli.js";
 
 const USAGE = `Usage: servable <command> [options]
 
 Commands:
-  serve <module>   Serve the compiled app a module default-exports
+  serve <module>    Serve the compiled app a module default-exports
+  routes <module>   Print the routes it answers, without serving it
 
-Run "servable serve --help" for serve's options.
+Run "servable <command> --help" for a command's options.
 `;
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   if (command === "serve") return serveCommand(rest);
+  if (command === "routes") return routesCommand(rest);
   if (command === "--version" || command === "-v") {
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
     process.stdout.write(`${pkg.version}\n`);

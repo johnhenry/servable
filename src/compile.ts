@@ -17,6 +17,7 @@ import { serveSrcProp } from "#serve-file";
 import { mergeHeaders, resolveHeadersInputOrFn } from "./headers-util.js";
 import { drainWarnings } from "./context.js";
 import { cloneDescriptorTree } from "./types.js";
+import { describeLayout } from "./routes.js";
 
 /** Response instances awaiting adapter-specific trailer transmission (HTTP trailers aren't part of the Fetch Response model -- see README's "Trailers" section). */
 export const pendingTrailers = new WeakMap<globalThis.Response, Promise<Headers>>();
@@ -240,7 +241,10 @@ function nearestScope(scopes: CompiledScope[], url: URL): CompiledScope | undefi
   return candidates.find((s) => s.notFoundHandler || s.notFoundStatic) ?? candidates[0];
 }
 
-export async function compile(tree: unknown, options: CompileOptions = {}): Promise<CompileResult> {
+export async function compile(
+  tree: unknown,
+  options: CompileOptions = {},
+): Promise<CompileResult & Required<Pick<CompileResult, "describeRoutes">>> {
   const cloned = cloneDescriptorTree(tree);
   const builtRoots = build(cloned);
   const resolvedRoots = await resolveTree(builtRoots, options);
@@ -275,5 +279,15 @@ export async function compile(tree: unknown, options: CompileOptions = {}): Prom
   // (api.ts), a deliberately global, fire-and-forget escape hatch any user
   // code can call at any time (mirroring fileable's own warn(), see
   // context.ts), not tied to any particular pipeline stage's own call.
-  return { fetch: dispatch, warnings: [...laidOut.warnings, ...resolvedRoots.warnings, ...drainWarnings()] };
+  const result: CompileResult = { fetch: dispatch, warnings: [...laidOut.warnings, ...resolvedRoots.warnings, ...drainWarnings()] };
+  // Non-enumerable, so the result still looks like `{ fetch, warnings }`
+  // (issue #21; hostable's compile() has had one since its #11). Reads the
+  // table built above; nothing runs again.
+  Object.defineProperty(result, "describeRoutes", {
+    value: async () => describeLayout(laidOut),
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+  return result as CompileResult & Required<Pick<CompileResult, "describeRoutes">>;
 }

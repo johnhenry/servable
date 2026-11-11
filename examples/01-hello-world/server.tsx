@@ -9,6 +9,7 @@
  * Run with:
  *   npm run build && node dist/examples/01-hello-world/server.js
  * Then:
+ *   curl http://localhost:3000/   # an index of the routes below
  *   curl http://localhost:3000/site/index.html
  *   curl http://localhost:3000/hello
  *   curl http://localhost:3000/users/42
@@ -20,6 +21,20 @@ import { serve } from "@johnhenry/servable/adapters/node";
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>Hello, world</h1>
+      <ul>
+        <li>
+          <a href="/hello">/hello</a>
+        </li>
+        <li>
+          <a href="/users/42">/users/:id</a>
+        </li>
+        <li>
+          <a href="/site/index.html">/site/index.html (a mounted fileable tree)</a>
+        </li>
+      </ul>
+    </Route>
     <Dir name="site">
       <File name="index.html">{"<h1>Hello, world!</h1>"}</File>
     </Dir>

@@ -518,3 +518,158 @@ test("#15: after the drain timeout, connections still open are force-closed (not
   const stopped = r.events.find((e) => e.event === "stopped")!;
   assert.deepEqual([stopped.exitCode, stopped.drained], [0, false]);
 });
+
+// ---------------------------------------------------------------------------
+// #21: the `routes` event and the `routes` command.
+
+/** Runs the bin to completion: exit code, stdout, stderr. */
+function runToEnd(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn(process.execPath, [cli, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout!.setEncoding("utf8").on("data", (d: string) => (stdout += d));
+  child.stderr!.setEncoding("utf8").on("data", (d: string) => (stderr += d));
+  return new Promise((resolve) => child.on("exit", (code) => resolve({ code, stdout, stderr })));
+}
+
+const routesApp = appSource(
+  `Route({ path: "/", method: "GET", children: ["home"] }),
+   Group({ prefix: "/api", children: [Route({ path: "/users/:id", method: "GET", handler: () => new Response("u") }), NotFound({ children: ["no"] })] }),
+   Redirect({ from: "/old", to: "/" })`,
+).replace("import { Router, Route, compile }", "import { Router, Route, Group, NotFound, Redirect, compile }");
+
+test("#21 serve --json: a routes event (schema v1) after the load, before ready", async () => {
+  const dir = fixtureDir();
+  const mod = join(dir, "app.mjs");
+  writeFileSync(mod, routesApp);
+  const r = run(["serve", mod, "--port", "0", "--json"]);
+  try {
+    await r.waitFor(ready);
+    const names = r.events.map((e) => e.event);
+    assert.deepEqual(names.slice(0, 2), ["routes", "ready"]);
+    const routes = r.events[0];
+    assert.equal(routes.v, SCHEMA_VERSION);
+    assert.equal(routes.complete, true);
+    assert.equal(routes.notFound, true);
+    assert.deepEqual(routes.backends, []);
+    const hosts = routes.hosts as { hostname: string; pattern: boolean; notFoundPrefixes: string[]; routes: Record<string, unknown>[] }[];
+    assert.equal(hosts.length, 1);
+    assert.equal(hosts[0].hostname, "*");
+    assert.deepEqual(hosts[0].notFoundPrefixes, ["/api"]);
+    assert.deepEqual(hosts[0].routes, [
+      { path: "/", methods: ["GET"], kind: "static", params: [], hasParams: false, prefix: "" },
+      { path: "/api/users/:id", methods: ["GET"], kind: "handler", params: ["id"], hasParams: true, prefix: "/api" },
+      { path: "/old", methods: ["*"], kind: "redirect", params: [], hasParams: false, prefix: "", redirect: "/", status: 301 },
+    ]);
+  } finally {
+    r.child.kill("SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#21 serve --json --watch: each good reload re-emits routes before its ready; a broken one doesn't", async () => {
+  const dir = fixtureDir();
+  const mod = join(dir, "app.mjs");
+  writeFileSync(mod, appSource(`Route({ path: "/", method: "GET", children: ["v1"] })`));
+  const r = run(["serve", mod, "--port", "0", "--json", "--watch"]);
+  const paths = (e: Event) => (e.hosts as { routes: { path: string }[] }[]).flatMap((h) => h.routes.map((x) => x.path));
+  try {
+    await r.waitFor(ready);
+    assert.deepEqual(paths(r.events.find((e) => e.event === "routes")!), ["/"]);
+
+    writeFileSync(mod, appSource(`Route({ path: "/", method: "GET", children: ["v2"] }), Route({ path: "/new", method: "GET", children: ["n"] })`));
+    const second = await r.waitFor((e) => e.event === "ready" && (e.reload as number) > 0);
+    const at = r.events.indexOf(second);
+    assert.equal(r.events[at - 1].event, "routes");
+    assert.deepEqual(paths(r.events[at - 1]), ["/", "/new"]);
+
+    writeFileSync(mod, `export default ;\n`);
+    const broken = await r.waitFor((e) => e.event === "ready" && e.ok === false);
+    const sinceSecond = r.events.slice(at + 1, r.events.indexOf(broken));
+    assert.ok(!sinceSecond.some((e) => e.event === "routes"), "no routes event for a failed load");
+  } finally {
+    r.child.kill("SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#21 human serve output doesn't list routes (unchanged)", async () => {
+  const dir = fixtureDir();
+  const mod = join(dir, "app.mjs");
+  writeFileSync(mod, routesApp);
+  const r = run(["serve", mod, "--port", "0"]);
+  try {
+    for (let i = 0; i < 200 && !/listening on/.test(r.stdoutLines.join("\n")); i++) await new Promise((res) => setTimeout(res, 25));
+    assert.deepEqual(r.stdoutLines.filter((l) => l !== ""), [r.stdoutLines.find((l) => /listening on/.test(l))]);
+    assert.doesNotMatch(r.stderr(), /users/);
+  } finally {
+    r.child.kill("SIGKILL");
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#21 servable routes <module>: human list, --json event, and the same load errors as serve", async () => {
+  const dir = fixtureDir();
+  const mod = join(dir, "app.mjs");
+  writeFileSync(mod, routesApp);
+  try {
+    const human = await runToEnd(["routes", mod]);
+    assert.equal(human.code, 0);
+    assert.equal(human.stdout, "(any host)\n  GET      /\n  GET      /api/users/:id\n  *        /old -> /\n");
+
+    const json = await runToEnd(["routes", mod, "--json"]);
+    assert.equal(json.code, 0);
+    const lines = json.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].event, "routes");
+    assert.equal(lines[0].v, SCHEMA_VERSION);
+    assert.equal(lines[0].complete, true);
+
+    // Same report as the serve event.
+    const r = run(["serve", mod, "--port", "0", "--json"]);
+    try {
+      const fromServe = await r.waitFor((e) => e.event === "routes");
+      const strip = ({ time: _t, ...rest }: Record<string, unknown>) => rest;
+      assert.deepEqual(strip(lines[0]), strip(fromServe));
+    } finally {
+      r.child.kill("SIGKILL");
+    }
+
+    const missing = await runToEnd(["routes", join(dir, "nope.mjs"), "--json"]);
+    assert.equal(missing.code, 3);
+    assert.equal(JSON.parse(missing.stdout).code, "E_MODULE_NOT_FOUND");
+    const usage = await runToEnd(["routes", "--json"]);
+    assert.equal(usage.code, 2);
+    assert.equal(JSON.parse(usage.stdout).code, "E_USAGE");
+    const help = await runToEnd(["routes", "--help"]);
+    assert.equal(help.code, 0);
+    assert.match(help.stdout, /^Usage: servable routes <module> \[--json\]/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#21 an app without describeRoutes(): complete false (a warning from `routes`, none from serve)", async () => {
+  const dir = fixtureDir();
+  const mod = join(dir, "app.mjs");
+  writeFileSync(mod, `export default { fetch: async () => new Response("hand-made"), warnings: [] };\n`);
+  try {
+    const out = await runToEnd(["routes", mod, "--json"]);
+    assert.equal(out.code, 0);
+    const [warning, routes] = out.stdout.trim().split("\n").map((l) => JSON.parse(l));
+    assert.equal(warning.event, "warning");
+    assert.equal(warning.code, "E_ROUTES_UNKNOWN");
+    assert.deepEqual([routes.event, routes.hosts, routes.backends, routes.complete], ["routes", [], [], false]);
+
+    const r = run(["serve", mod, "--port", "0", "--json"]);
+    try {
+      await r.waitFor(ready);
+      assert.deepEqual(r.events.map((e) => e.event), ["routes", "ready"]);
+      assert.equal(r.events[0].complete, false);
+    } finally {
+      r.child.kill("SIGKILL");
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

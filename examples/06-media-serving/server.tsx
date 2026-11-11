@@ -8,6 +8,7 @@
  * Run with:
  *   npm run build && node dist/examples/06-media-serving/server.js
  * Then:
+ *   curl http://localhost:3005/   # an index of the routes below
  *   curl http://localhost:3005/sample.txt                              # full file
  *   curl -H "Range: bytes=0-9" http://localhost:3005/sample.txt -i      # 206 partial
  *   curl -i http://localhost:3005/sample-download.txt                  # Content-Disposition
@@ -22,6 +23,17 @@ const sample = new Blob(["This is a small text file being served with byte-range
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>Media serving</h1>
+      <ul>
+        <li>
+          <a href="/sample.txt">/sample.txt (Range requests work)</a>
+        </li>
+        <li>
+          <a href="/sample-download.txt">/sample-download.txt (a download)</a>
+        </li>
+      </ul>
+    </Route>
     <Route path="/sample.txt" method="GET" src={sample} />
     <Route path="/sample-download.txt" method="GET" src={sample} download="renamed-on-download.txt" />
   </Router>

@@ -21,6 +21,7 @@
  * Run with:
  *   npm run build && node dist/examples/08-mount-packfile/server.js
  * Then:
+ *   curl http://localhost:3007/   # an index of the routes below
  *   curl http://localhost:3007/mem/
  *   curl http://localhost:3007/mem/docs/index.html
  */
@@ -42,6 +43,17 @@ const router = createRouter(files, {
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>A mounted packfile</h1>
+      <ul>
+        <li>
+          <a href="/mem/">/mem/</a>
+        </li>
+        <li>
+          <a href="/mem/docs/index.html">/mem/docs/index.html</a>
+        </li>
+      </ul>
+    </Route>
     <Group prefix="/mem">
       <Route path="/*" method="GET" handler={(req, ctx) => router(ctx.params["0"] ?? "")} />
     </Group>

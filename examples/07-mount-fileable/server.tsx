@@ -23,16 +23,28 @@
  * README's "Mounting a fileable tree" section's "NAMING" discussion for
  * why, and how to mount without a name showing up at all if you'd rather
  * not have it there):
+ *   curl http://localhost:3006/   # an index of the routes below
  *   curl http://localhost:3006/site/dist                     # index.html at the dir's own path (no trailing slash -- posixDirname never adds one except for the true root)
  *   curl http://localhost:3006/site/dist/about/index.html
  */
 /** @jsxImportSource @johnhenry/servable */
 import { Dir, File } from "@johnhenry/fileable";
-import { Router, Group, compile } from "@johnhenry/servable";
+import { Router, Group, Route, compile } from "@johnhenry/servable";
 import { serve } from "@johnhenry/servable/adapters/node";
 
 const app = (
   <Router>
+    <Route path="/" method="GET">
+      <h1>A mounted fileable tree</h1>
+      <ul>
+        <li>
+          <a href="/site/dist">/site/dist</a>
+        </li>
+        <li>
+          <a href="/site/dist/about/index.html">/site/dist/about/index.html</a>
+        </li>
+      </ul>
+    </Route>
     <Group prefix="/site">
       <Dir name="dist">
         <File name="index.html">

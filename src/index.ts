@@ -8,6 +8,11 @@ export { build } from "./build.js";
 export { resolve } from "#resolve";
 export { layout } from "./layout.js";
 
+// What an app answers, as data (issue #21): the same report a compiled
+// app's describeRoutes() returns and `servable routes` prints.
+export { describeRoutes, describeLayout } from "./routes.js";
+export type { RoutesReport, HostEntry, RouteEntry, RouteKind, BackendEntry } from "./routes.js";
+
 // Exposed so a caller that inspects a compiled/resolved tree (e.g. to draw
 // a route table, per issue #9) can get its own safe copy without mutating
 // the original -- compile() already relies on this internally to clone the
