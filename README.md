@@ -629,7 +629,7 @@ ignore what you don't know.
 | --- | --- | --- |
 | `routes` | `hosts`, `backends`, `notFound`, `complete` | After each good load, before its `ready`: at start and after every successful reload. A failed reload sends none (the last one still describes nothing being served; `ready` says `ok: false`). See "Listing routes" below. |
 | `ready` | `url`, `host`, `port`, `publicUrl` (or `null`), `module`, `pid`, `ok`, `reload` | Listening, and after every reload. `port` is the real port, even with `--port 0`. `ok: false` means the module is broken and every request gets a 500 (only under `--watch`). `reload` counts reloads, 0 at start. |
-| `request` | `method`, `host`, `path` (with query), `status`, `ms` | Each response, when its headers are ready. |
+| `request` | `method`, `host`, `path` (with query), `status`, `ms`, sometimes more | Each response, when its headers are ready. An embedder's `requestError` hook can add fields to it for a request whose handler threw (hostable: `backend`); servable's own bin adds none. |
 | `reloading` | `files` | `--watch` saw a change. Exactly one `ready` follows (after a `routes`, if the new version loaded). |
 | `warning` | `message`, sometimes `code` | Compile warnings, `E_DRAIN_TIMEOUT`, `E_DRAIN_SKIPPED`, `E_WATCH`, `E_ROUTES_UNKNOWN` (`servable routes` only). |
 | `error` | `code`, `message`, `fatal`, sometimes `stack`, `permission`, `errno` | `fatal: true` is followed by `stopped` and the exit code below. |
@@ -780,7 +780,7 @@ behaviour:
 | `compileHint` | `export default await compile(<Router>...</Router>)` | What `E_NOT_AN_APP` tells the user to write. |
 | `load` | `loadApp` | Imports the module and checks its default export. |
 | `afterLoad(app, reporter)` | `emitRoutes`: the `routes` event | Runs after each good load, before `ready` (e.g. to emit an extra event). Setting it replaces the default, so call `emitRoutes(app, reporter)` too to keep the `routes` event. |
-| `requestError(error, reporter)` | none | Maps an error the app threw to a `Response` (reporting its own event); `undefined` keeps the 500 and `E_REQUEST`. |
+| `requestError(error, reporter)` | none | Maps an error the app threw to a `Response` (reporting its own event); `undefined` keeps the 500 and `E_REQUEST`. Return `{ response, fields }` (`RequestErrorResult`) instead to add `fields` to that request's `request` event, e.g. hostable's `backend` on a 502/504. The runtime's own `method`, `host`, `path`, `status` and `ms` win over a field of the same name, and human output's request line doesn't show added fields. |
 | `errorCodes` | none | Extra `E_*` codes and the exit code each ends with when fatal (`exitCodeFor()`). |
 | `renderers` | `routes` silent in `serve` | Human rendering for extra events, by name: `(fields, label) => ({ to: "stdout" \| "stderr", text }) \| undefined`. `--json` output is unaffected. `createReporter()` renders `routes` with `formatRoutesHuman()`; `serveCommand()` silences it unless `renderers.routes` is given. |
 
