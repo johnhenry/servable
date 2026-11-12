@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 (2026-11-12)
 
 ### Added
-- **[#24] `RunHooks.requestError` can add fields to the paired `request` event.** It may now return `{ response, fields }` (the new `RequestErrorResult` type) as well as a bare `Response` or `undefined`; `fields` are added to the `request` event for that one request. hostable needs this to put `backend` on its 502/504 `request` lines.
+- **[#24, #25] `RunHooks.requestError` can add fields to the paired `request` event.** It may now return `{ response, fields }` (the new `RequestErrorResult` type) as well as a bare `Response` or `undefined`; `fields` are added to the `request` event for that one request. hostable needs this to put `backend` on its 502/504 `request` lines.
   - Additive: a bare `Response` and `undefined` behave exactly as before, and the runtime's own `method`, `host`, `path`, `status` and `ms` win a name clash, so no existing field can be replaced or retyped. Schema stays `v: 1`.
   - The `servable` bin sets no `requestError`, so its output is unchanged (the CLI parity harness's 21 scenarios are byte-identical before and after). Human output's request line doesn't show added fields.
   - Tests: `test/serve-cli-hooks.test.ts` (fields added and ordered after the envelope, clash rule, only that request, human line unchanged; bare-Response request events keep exactly the old keys).
