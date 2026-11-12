@@ -45,6 +45,10 @@ process.exitCode = await serveCommand(process.argv.slice(3), {
   renderers: { custom: (fields, label) => ({ to: "stdout", text: label + ": custom " + fields.n + "\\n" }) },
   afterLoad: (_app, reporter) => reporter.event("custom", { n: 1 }),
   requestError: (error, reporter) => {
+    if (error?.message === "upstream slow") {
+      reporter.event("error", { code: "E_ACME_UPSTREAM", message: "mapped with fields", fatal: false });
+      return { response: new Response("Gateway Timeout", { status: 504 }), fields: { backend: "http://backend.test/", status: 999, method: "NOPE" } };
+    }
     if (error?.message !== "upstream down") return undefined;
     reporter.event("error", { code: "E_ACME_UPSTREAM", message: "mapped", fatal: false });
     return new Response("Bad Gateway", { status: 502 });
@@ -61,6 +65,7 @@ ${prelude}
 export default await compile(Router({ children: [
   Route({ path: "/dep", method: "GET", handler: () => new Response(depUrl) }),
   Route({ path: "/upstream", method: "GET", handler: () => { throw new Error("upstream down"); } }),
+  Route({ path: "/upstream-fields", method: "GET", handler: () => { throw new Error("upstream slow"); } }),
   Route({ path: "/boom", method: "GET", handler: () => { throw new Error("kaboom"); } }),
 ] }));
 `;
@@ -141,8 +146,48 @@ test("#17 hooks, --json: afterLoad event, requestError mapping (and the default 
     const errors = p.events().filter((e) => e.event === "error");
     assert.deepEqual(errors.map((e) => e.code), ["E_ACME_UPSTREAM", "E_REQUEST"]);
     for (const e of p.events()) assert.equal(e.v, 1);
+    // A bare Response (and the default 500) leave the request event exactly as it was.
+    for (const e of p.events().filter((e) => e.event === "request")) {
+      assert.deepEqual(Object.keys(e), ["v", "event", "time", "method", "host", "path", "status", "ms"]);
+    }
   } finally {
     p.kill();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("#24 requestError returning { response, fields } adds fields to that request's request event", async () => {
+  const { dir, acme, mod } = setup();
+  const p = start(acme, ["serve", mod, "--port", "0", "--json"]);
+  try {
+    const url = await p.url();
+    const res = await fetch(`${url}upstream-fields?x=1`);
+    assert.deepEqual([res.status, await res.text()], [504, "Gateway Timeout"]);
+    await fetch(`${url}upstream`);
+    await p.waitFor(() => p.events().filter((e) => e.event === "request").length === 2, "two requests");
+    const [withFields, bare] = p.events().filter((e) => e.event === "request");
+    // Added fields come after the envelope; the runtime's own fields win a clash.
+    assert.deepEqual(Object.keys(withFields), ["v", "event", "time", "backend", "status", "method", "host", "path", "ms"]);
+    assert.equal(withFields.backend, "http://backend.test/");
+    assert.equal(withFields.status, 504);
+    assert.equal(withFields.method, "GET");
+    assert.equal(withFields.path, "/upstream-fields?x=1");
+    // Only that request: the next one (a bare Response) carries no extra fields.
+    assert.equal(bare.path, "/upstream");
+    assert.equal("backend" in bare, false);
+    assert.deepEqual(p.events().filter((e) => e.event === "error").map((e) => e.message), ["mapped with fields", "mapped"]);
+  } finally {
+    p.kill();
+  }
+  // Human output: the request line is unchanged (extra fields are --json only).
+  const h = start(acme, ["serve", mod, "--port", "0"]);
+  try {
+    const url = await h.url();
+    await fetch(`${url}upstream-fields`);
+    await h.waitFor(() => /GET \/upstream-fields/.test(h.stdout()), "request line");
+    assert.match(h.stdout(), /^GET \/upstream-fields 504 [\d.]+ms$/m);
+  } finally {
+    h.kill();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -23,7 +23,8 @@
  *
  * It's also exported as `@johnhenry/servable/cli` (#17), so a package built
  * on servable (hostable) runs the same contract instead of a copy: the
- * `RunHooks` below add error codes, request-error mapping, human renderings
+ * `RunHooks` below add error codes, request-error mapping (with extra
+ * fields for that request's `request` event, #24), human renderings
  * for extra events, and the product strings (label, usage, reload query
  * parameter, the 500 page's text, the not-an-app hint). Every hook defaults
  * to servable's own behaviour.
@@ -643,6 +644,13 @@ export function formatUrl(host: string, port: number, protocol = "http:"): strin
   return `${protocol}//${shown.includes(":") ? `[${shown}]` : shown}:${port}/`;
 }
 
+/** `RunHooks.requestError`'s long form: the response plus fields for the paired `request` event (#24). */
+export interface RequestErrorResult {
+  response: Response;
+  /** Added to this request's `request` event. The runtime's own fields win on a name clash. */
+  fields?: EventFields;
+}
+
 export interface RunHooks {
   /** Program name in human output and the 500 page (default `"servable"`). */
   label?: string;
@@ -659,9 +667,12 @@ export interface RunHooks {
    * Turns an error the app's `fetch()` threw into a response, reporting its
    * own event (hostable: an unreachable `<Upstream url=>` is a 502/504 with
    * `E_UPSTREAM`). Return undefined for the default: a 500 and a non-fatal
-   * `E_REQUEST` event.
+   * `E_REQUEST` event. Return `{ response, fields }` instead of a bare
+   * `Response` to add `fields` to that request's `request` event (#24;
+   * hostable: `backend` on a 502/504). Added fields never replace the
+   * runtime's own (`method`, `host`, `path`, `status`, `ms`).
    */
-  requestError?: (error: unknown, reporter: Reporter) => Response | undefined;
+  requestError?: (error: unknown, reporter: Reporter) => Response | RequestErrorResult | undefined;
   /** Extra error codes and the exit code each ends the process with when fatal (see `exitCodeFor()`). */
   errorCodes?: Readonly<Record<string, number>>;
   /** Human renderings for extra events (hostable: `routes`), see `createReporter()`. Used by `serveCommand()`. */
@@ -806,11 +817,15 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
         const origin = externalOrigin(incoming, options);
         const request = origin ? withOrigin(incoming, origin) : incoming;
         let response: Response;
+        let extra: EventFields | undefined;
         try {
           response = await app!.fetch(request);
         } catch (error) {
           const mapped = hooks.requestError?.(error, reporter);
-          if (mapped) response = mapped;
+          if (mapped && "response" in mapped && !(mapped instanceof Response)) {
+            response = mapped.response;
+            extra = mapped.fields;
+          } else if (mapped) response = mapped as Response;
           else {
             reporter.event("error", { ...errorFields(error, false), code: "E_REQUEST" });
             response = new Response("Internal Server Error", { status: 500 });
@@ -818,6 +833,7 @@ export function runServe(options: ServeOptions, reporter: Reporter, hooks: RunHo
         }
         const url = new URL(request.url);
         reporter.event("request", {
+          ...extra,
           method: request.method,
           host: url.host,
           path: url.pathname + url.search,
